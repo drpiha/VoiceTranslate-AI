@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment files (except example)
+.env
+.env.local
+.env.*.local
+
+# Database files
+*.db
+*.db-journal
+prisma/dev.db
+prisma/test.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Coverage
+coverage/
+
+# Test results
+test-results/
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Prisma
+prisma/migrations/.migration_lock.toml

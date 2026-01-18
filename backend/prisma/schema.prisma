@@ -1,0 +1,181 @@
+// =============================================================================
+// VoiceTranslate AI - Prisma Schema
+// =============================================================================
+// This schema defines the database models for the voice translation application.
+// Using SQLite for development; switch to PostgreSQL for production.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// User Model
+// -----------------------------------------------------------------------------
+// Stores user account information, subscription status, and usage tracking.
+// -----------------------------------------------------------------------------
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  passwordHash   String
+  name           String?
+
+  // OAuth provider IDs
+  googleId       String?  @unique
+  appleId        String?  @unique
+  profileImage   String?
+
+  // Subscription tier: 'free', 'basic', 'premium', 'enterprise'
+  subscription   String   @default("free")
+
+  // Usage tracking for rate limiting and billing
+  dailyUsage     Int      @default(0)  // Minutes used today
+  monthlyUsage   Int      @default(0)  // Minutes used this month
+  lastUsageReset DateTime @default(now())
+
+  // Account status
+  isActive       Boolean  @default(true)
+  isEmailVerified Boolean @default(false)
+
+  // Email verification
+  emailVerificationToken   String?
+  emailVerificationExpires DateTime?
+
+  // Password reset
+  passwordResetToken   String?
+  passwordResetExpires DateTime?
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  translations   Translation[]
+  refreshTokens  RefreshToken[]
+  subscriptionReceipts SubscriptionReceipt[]
+
+  @@index([email])
+  @@index([subscription])
+  @@index([googleId])
+}
+
+// -----------------------------------------------------------------------------
+// Translation Model
+// -----------------------------------------------------------------------------
+// Stores translation history for user reference and analytics.
+// -----------------------------------------------------------------------------
+model Translation {
+  id          String   @id @default(uuid())
+  userId      String
+
+  // Translation content
+  sourceText  String
+  targetText  String
+  sourceLang  String   // ISO 639-1 language code (e.g., 'en', 'es')
+  targetLang  String   // ISO 639-1 language code
+
+  // Translation metadata
+  isVoice     Boolean  @default(false)  // Was this a voice translation?
+  durationMs  Int?     // Audio duration in milliseconds (for voice)
+  confidence  Float?   // Translation confidence score (0-1)
+
+  // Timestamps
+  createdAt   DateTime @default(now())
+
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([sourceLang, targetLang])
+}
+
+// -----------------------------------------------------------------------------
+// RefreshToken Model
+// -----------------------------------------------------------------------------
+// Stores refresh tokens for JWT authentication with revocation support.
+// -----------------------------------------------------------------------------
+model RefreshToken {
+  id          String   @id @default(uuid())
+  userId      String
+
+  // Token data (hashed for security)
+  tokenHash   String   @unique
+
+  // Device/session identification
+  deviceId    String?
+  userAgent   String?
+  ipAddress   String?
+
+  // Token lifecycle
+  expiresAt   DateTime
+  isRevoked   Boolean  @default(false)
+  revokedAt   DateTime?
+
+  // Timestamps
+  createdAt   DateTime @default(now())
+
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+// -----------------------------------------------------------------------------
+// SubscriptionReceipt Model
+// -----------------------------------------------------------------------------
+// Stores app store receipt data for subscription verification.
+// -----------------------------------------------------------------------------
+model SubscriptionReceipt {
+  id              String   @id @default(uuid())
+  userId          String
+
+  // Receipt data
+  platform        String   // 'apple' or 'google'
+  receiptData     String   // Encrypted receipt data
+  transactionId   String   @unique
+  productId       String
+
+  // Subscription details
+  purchaseDate    DateTime
+  expirationDate  DateTime?
+  isActive        Boolean  @default(true)
+
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([transactionId])
+  @@index([expirationDate])
+}
+
+// -----------------------------------------------------------------------------
+// SupportedLanguage Model
+// -----------------------------------------------------------------------------
+// Stores supported languages for translation.
+// -----------------------------------------------------------------------------
+model SupportedLanguage {
+  code        String   @id  // ISO 639-1 code
+  name        String       // English name
+  nativeName  String       // Native name
+
+  // Feature support flags
+  supportsTTS Boolean  @default(false)  // Text-to-speech available
+  supportsSTT Boolean  @default(false)  // Speech-to-text available
+
+  // Status
+  isActive    Boolean  @default(true)
+
+  @@index([isActive])
+}

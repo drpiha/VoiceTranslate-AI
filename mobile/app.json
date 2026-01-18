@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "VoiceTranslate AI",
+    "slug": "voicetranslate-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1E3A8A"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.voicetranslate.ai",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "This app needs access to your microphone to record and translate your speech in real-time.",
+        "NSSpeechRecognitionUsageDescription": "This app uses speech recognition to translate your voice."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1E3A8A"
+      },
+      "package": "com.voicetranslate.ai",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "scheme": "voicetranslate",
+    "plugins": [
+      "expo-router",
+      "expo-system-ui",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow VoiceTranslate AI to access your microphone."
+        }
+      ],
+      "expo-web-browser"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c61384ab-1975-4f0d-8a8e-0d89b41f87d0"
+      }
+    },
+    "owner": "drhasanhd"
+  }
+}
