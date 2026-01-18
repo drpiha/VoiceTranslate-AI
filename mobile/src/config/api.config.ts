@@ -11,7 +11,7 @@
 // https://voicetranslate-backend-production.up.railway.app
 //
 // Update this variable with your actual Railway URL:
-export const PRODUCTION_API_URL = 'https://voicetranslate-backend-production.up.railway.app';
+export const PRODUCTION_API_URL = 'https://voicetranslate-backend.onrender.com';
 
 // =============================================================================
 // DO NOT MODIFY BELOW THIS LINE
