@@ -10,7 +10,7 @@
 import { PrismaClient } from '@prisma/client';
 import { subscriptionLimits, SubscriptionTier, env } from '../config/env.js';
 import { createLogger } from '../utils/logger.js';
-import { encrypt, decrypt } from '../utils/crypto.js';
+import { encrypt } from '../utils/crypto.js';
 import { ValidationError, ExternalServiceError, NotFoundError } from '../utils/errors.js';
 
 const logger = createLogger('subscription-service');
@@ -350,7 +350,7 @@ export class SubscriptionService {
    * This is a mock implementation - real implementation would call Apple's API.
    */
   private async verifyAppleReceipt(
-    receiptData: string,
+    _receiptData: string,
     productId: string,
     tier: SubscriptionTier
   ): Promise<VerifyReceiptResult> {
@@ -391,7 +391,7 @@ export class SubscriptionService {
    * This is a mock implementation - real implementation would call Google's API.
    */
   private async verifyGoogleReceipt(
-    receiptData: string,
+    _receiptData: string,
     productId: string,
     tier: SubscriptionTier
   ): Promise<VerifyReceiptResult> {

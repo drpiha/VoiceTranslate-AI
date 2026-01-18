@@ -334,11 +334,12 @@ export function redactSensitiveFields<T extends Record<string, unknown>>(
 export function maskEmail(email: string): string {
   const parts = email.split('@');
   if (parts.length !== 2) return '***@***.***';
-  const local = parts[0];
-  const domain = parts[1];
+  const local = parts[0] || '';
+  const domain = parts[1] || '';
   const domainParts = domain.split('.');
   const maskedLocal = local.length > 2 ? local.slice(0, 2) + '**' : '**';
-  const maskedDomain = domainParts[0].length > 2 ? domainParts[0].slice(0, 2) + '***' : '***';
+  const domainFirst = domainParts[0] || '';
+  const maskedDomain = domainFirst.length > 2 ? domainFirst.slice(0, 2) + '***' : '***';
   const tld = domainParts[1] || '***';
   return maskedLocal + '@' + maskedDomain + '.' + tld;
 }

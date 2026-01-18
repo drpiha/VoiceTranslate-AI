@@ -677,7 +677,7 @@ function isCorrection(previous: string, current: string): boolean {
 async function handleStartRealtime(
   ws: WebSocket,
   userId: string,
-  subscription: string,
+  _subscription: string,
   configData: unknown
 ): Promise<void> {
   logger.info('Starting realtime session', { userId, configData });

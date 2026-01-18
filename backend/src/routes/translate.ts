@@ -171,7 +171,7 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const data = await request.file();
+        const data = await (request as any).file();
 
         if (!data) {
           return reply.code(400).send({

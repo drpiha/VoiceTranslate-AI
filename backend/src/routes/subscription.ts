@@ -234,7 +234,7 @@ export async function subscriptionRoutes(fastify: FastifyInstance): Promise<void
     },
     async (request: FastifyRequest<{ Body: { platform: 'apple' | 'google'; receiptData: string } }>, reply: FastifyReply) => {
       const userId = request.authUser!.userId;
-      const { platform, receiptData } = request.body;
+      const { platform, receiptData: _receiptData } = request.body;
 
       logger.info('Restore purchases request', {
         userId,
