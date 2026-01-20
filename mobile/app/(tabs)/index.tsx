@@ -16,9 +16,18 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+
+// Conditionally import BlurView only on iOS
+let BlurView: any = null;
+if (Platform.OS === 'ios') {
+  try {
+    BlurView = require('expo-blur').BlurView;
+  } catch (e) {
+    // BlurView not available
+  }
+}
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -304,7 +313,7 @@ export default function TranslateScreen() {
               styles.languageContainer,
               { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.9)' }
             ]}>
-              {Platform.OS === 'ios' && (
+              {Platform.OS === 'ios' && BlurView && (
                 <BlurView intensity={isDark ? 20 : 40} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
               )}
               <View style={styles.languageContent}>

@@ -2,17 +2,25 @@ import { Tabs } from 'expo-router';
 import { useColorScheme, View, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import Animated, {
   useAnimatedStyle,
   withSpring,
-  interpolateColor,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
 import { useEffect } from 'react';
+
+// Conditionally import BlurView only on iOS
+let BlurView: any = null;
+if (Platform.OS === 'ios') {
+  try {
+    BlurView = require('expo-blur').BlurView;
+  } catch (e) {
+    // BlurView not available
+  }
+}
 
 const AnimatedView = Animated.createAnimatedComponent(View);
 
@@ -62,7 +70,8 @@ function TabIcon({ name, color, focused, size = 24 }: TabIconProps) {
 }
 
 function TabBarBackground({ isDark }: { isDark: boolean }) {
-  if (Platform.OS === 'ios') {
+  // Use BlurView on iOS if available, otherwise fall back to gradient
+  if (Platform.OS === 'ios' && BlurView) {
     return (
       <BlurView
         intensity={isDark ? 60 : 80}
@@ -81,7 +90,7 @@ function TabBarBackground({ isDark }: { isDark: boolean }) {
     );
   }
 
-  // Android fallback
+  // Android and iOS fallback (when BlurView not available)
   return (
     <LinearGradient
       colors={
