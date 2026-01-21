@@ -631,6 +631,23 @@ class AudioService {
    */
   private async startListening(): Promise<void> {
     try {
+      // CRITICAL: Clean up any existing recording before creating a new one
+      if (this.recording) {
+        console.log('Cleaning up existing recording before starting new one...');
+        try {
+          const status = await this.recording.getStatusAsync();
+          if (status.isRecording || status.isDoneRecording) {
+            await this.recording.stopAndUnloadAsync();
+          }
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        this.recording = null;
+      }
+
+      // Small delay to ensure audio system is ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+
       // Create recording with optimized settings for speech
       const { recording } = await Audio.Recording.createAsync(
         {

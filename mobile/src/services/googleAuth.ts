@@ -20,7 +20,7 @@ export const GOOGLE_AUTH_CONFIG = {
   // Web client ID - Required for all platforms
   webClientId: '182940512892-dhci3lvnjmo6748kt9495vsv8o3g2kg7.apps.googleusercontent.com',
   // Android client ID - Get from Google Cloud Console with your SHA-1 fingerprint
-  androidClientId: undefined as string | undefined,
+  androidClientId: '182940512892-um065l5i195qfkedjjh7kdcfb16al3jj.apps.googleusercontent.com',
   // iOS client ID - Get from Google Cloud Console
   iosClientId: undefined as string | undefined,
   // Expo client ID for Expo Go development
@@ -29,34 +29,96 @@ export const GOOGLE_AUTH_CONFIG = {
 
 /**
  * Check if Google Auth is configured for the current platform
+ * For production builds: Android needs androidClientId, iOS needs iosClientId
  */
 export const isGoogleAuthConfigured = (): boolean => {
   if (Platform.OS === 'web') {
     return !!GOOGLE_AUTH_CONFIG.webClientId;
   }
   if (Platform.OS === 'android') {
-    // On Android with Expo Go, we can use webClientId
-    return !!GOOGLE_AUTH_CONFIG.webClientId || !!GOOGLE_AUTH_CONFIG.androidClientId;
+    // Android standalone builds REQUIRE androidClientId
+    // webClientId alone is NOT sufficient for production APK
+    return !!GOOGLE_AUTH_CONFIG.androidClientId;
   }
   if (Platform.OS === 'ios') {
-    return !!GOOGLE_AUTH_CONFIG.iosClientId || !!GOOGLE_AUTH_CONFIG.webClientId;
+    // iOS standalone builds require iosClientId
+    return !!GOOGLE_AUTH_CONFIG.iosClientId;
   }
   return false;
 };
 
 /**
- * Get the Google Auth request configuration
+ * Check if Google Auth is properly configured for the current platform (production builds)
  */
-export const useGoogleAuth = () => {
+const isPlatformConfigured = (): boolean => {
+  if (Platform.OS === 'android') {
+    // Android standalone builds REQUIRE androidClientId
+    return !!GOOGLE_AUTH_CONFIG.androidClientId;
+  }
+  if (Platform.OS === 'ios') {
+    // iOS needs iosClientId for standalone builds
+    return !!GOOGLE_AUTH_CONFIG.iosClientId;
+  }
+  // Web can use webClientId
+  return !!GOOGLE_AUTH_CONFIG.webClientId;
+};
+
+/**
+ * Null hook for unconfigured platforms - prevents crash
+ */
+const useNullGoogleAuth = () => ({
+  request: null as null,
+  response: null as null,
+  promptAsync: async () => ({ type: 'dismiss' as const }),
+});
+
+/**
+ * Check if running in Expo Go (development) vs standalone build (production)
+ */
+const isExpoGo = (): boolean => {
+  // In Expo Go, Constants.appOwnership is 'expo'
+  // In standalone builds, it's 'standalone' or undefined
+  try {
+    const Constants = require('expo-constants').default;
+    return Constants.appOwnership === 'expo';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Real Google Auth hook - only used when properly configured
+ */
+const useRealGoogleAuth = () => {
   const [request, response, promptAsync] = Google.useAuthRequest({
     webClientId: GOOGLE_AUTH_CONFIG.webClientId,
     androidClientId: GOOGLE_AUTH_CONFIG.androidClientId,
     iosClientId: GOOGLE_AUTH_CONFIG.iosClientId,
     expoClientId: GOOGLE_AUTH_CONFIG.expoClientId,
+    // For standalone builds, we need to specify the redirect URI
+    redirectUri: Platform.OS === 'android'
+      ? 'com.voicetranslate.ai:/oauth2redirect'
+      : undefined,
   });
 
-  return { request, response, promptAsync };
+  // Wrap promptAsync - use proxy only in Expo Go
+  const wrappedPromptAsync = async (options?: any) => {
+    const shouldUseProxy = isExpoGo();
+    console.log('Google Auth: useProxy =', shouldUseProxy);
+    return promptAsync({
+      ...options,
+      useProxy: shouldUseProxy,
+    });
+  };
+
+  return { request, response, promptAsync: wrappedPromptAsync };
 };
+
+/**
+ * Get the Google Auth request configuration
+ * Uses null hook if platform is not properly configured to prevent crashes
+ */
+export const useGoogleAuth = isPlatformConfigured() ? useRealGoogleAuth : useNullGoogleAuth;
 
 /**
  * Get Google user info from access token

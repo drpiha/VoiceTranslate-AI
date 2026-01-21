@@ -62,13 +62,12 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
           { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
         ]}
       >
-        <Text style={styles.flag}>{selectedLanguage?.flag}</Text>
         <Text
           style={[styles.selectedText, { color: theme.colors.text }]}
           numberOfLines={1}
           ellipsizeMode="tail"
         >
-          {selectedLanguage?.name || placeholder}
+          {selectedLanguage ? `${selectedLanguage.name} (${selectedLanguage.code.toUpperCase()})` : placeholder}
         </Text>
         <Text style={[styles.arrow, { color: theme.colors.textSecondary }]}>▼</Text>
       </TouchableOpacity>
@@ -121,7 +120,11 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
                     value === item.code && { backgroundColor: theme.colors.primaryLight + '20' },
                   ]}
                 >
-                  <Text style={styles.languageFlag}>{item.flag}</Text>
+                  <View style={styles.languageCode}>
+                    <Text style={[styles.languageCodeText, { color: theme.colors.primary }]}>
+                      {item.code.toUpperCase()}
+                    </Text>
+                  </View>
                   <View style={styles.languageTextContainer}>
                     <Text style={[styles.languageName, { color: theme.colors.text }]}>
                       {item.name}
@@ -161,13 +164,9 @@ const styles = StyleSheet.create({
     gap: 12,
     minWidth: 120,
   },
-  flag: {
-    fontSize: 24,
-    width: 32,
-  },
   selectedText: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '500',
     flexShrink: 1,
   },
@@ -219,8 +218,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     gap: 12,
   },
-  languageFlag: {
-    fontSize: 28,
+  languageCode: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: 'rgba(30, 58, 138, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  languageCodeText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
   languageTextContainer: {
     flex: 1,

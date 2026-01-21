@@ -21,6 +21,25 @@ export default function SignUpScreen() {
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
   const theme = createTheme(isDark);
 
+  const validatePassword = (pwd: string): { valid: boolean; message: string } => {
+    if (pwd.length < 10) {
+      return { valid: false, message: 'Password must be at least 10 characters long' };
+    }
+    if (!/[a-z]/.test(pwd)) {
+      return { valid: false, message: 'Password must contain at least one lowercase letter' };
+    }
+    if (!/[A-Z]/.test(pwd)) {
+      return { valid: false, message: 'Password must contain at least one uppercase letter' };
+    }
+    if (!/[0-9]/.test(pwd)) {
+      return { valid: false, message: 'Password must contain at least one number' };
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd)) {
+      return { valid: false, message: 'Password must contain at least one special character (!@#$%^&*...)' };
+    }
+    return { valid: true, message: '' };
+  };
+
   const validateForm = () => {
     if (!name.trim()) {
       Alert.alert('Validation Error', 'Please enter your name');
@@ -30,8 +49,9 @@ export default function SignUpScreen() {
       Alert.alert('Validation Error', 'Please enter a valid email address');
       return false;
     }
-    if (password.length < 6) {
-      Alert.alert('Validation Error', 'Password must be at least 6 characters long');
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.valid) {
+      Alert.alert('Validation Error', passwordValidation.message);
       return false;
     }
     if (password !== confirmPassword) {
@@ -127,7 +147,7 @@ export default function SignUpScreen() {
                 borderColor: theme.colors.border,
               },
             ]}
-            placeholder="Password (min 6 characters)"
+            placeholder="Password (Aa1@, min 10 chars)"
             placeholderTextColor={theme.colors.textSecondary}
             value={password}
             onChangeText={setPassword}
