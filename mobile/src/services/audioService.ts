@@ -810,9 +810,9 @@ class AudioService {
       this.recording = null;
 
       if (uri && segmentDuration >= VAD_CONFIG.MIN_SEGMENT_DURATION_MS) {
-        // Convert to base64
+        // Convert to base64 - using string literal for compatibility
         const base64 = await FileSystem.readAsStringAsync(uri, {
-          encoding: FileSystem.EncodingType.Base64,
+          encoding: 'base64',
         });
 
         this.segmentCount++;
