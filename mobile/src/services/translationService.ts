@@ -1,5 +1,5 @@
 import { TranslationResponse } from '../types';
-import { apiClient } from './api';
+import { apiClient, tokenStorage } from './api';
 import { getWebSocketBaseUrl } from '../config/api.config';
 
 const WS_BASE_URL = getWebSocketBaseUrl();
@@ -192,15 +192,25 @@ class TranslationService {
   }
 
   // Connect to real-time translation WebSocket
-  connectRealtimeWebSocket(
+  async connectRealtimeWebSocket(
     onMessage: (data: RealtimeTranslationResult) => void,
     onError?: (error: any) => void,
     onConnected?: () => void
-  ): void {
+  ): Promise<void> {
     try {
-      // Use test mode for authentication bypass
-      const url = `${WS_BASE_URL}/translate?test=true`;
-      console.log('Connecting to WebSocket:', url);
+      // Get auth token for WebSocket authentication
+      const accessToken = await tokenStorage.getAccessToken();
+
+      // Build WebSocket URL with auth token
+      let url = `${WS_BASE_URL}/translate`;
+      if (accessToken) {
+        url += `?token=${encodeURIComponent(accessToken)}`;
+        console.log('Connecting to WebSocket with auth token');
+      } else {
+        console.log('No auth token available, connecting without auth');
+      }
+
+      console.log('Connecting to WebSocket:', url.substring(0, 50) + '...');
       this.socket = new WebSocket(url);
       this.onMessageCallback = onMessage;
 

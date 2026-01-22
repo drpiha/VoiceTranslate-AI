@@ -14,6 +14,7 @@ import {
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColorScheme } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useUserStore } from '../../src/store/userStore';
@@ -22,8 +23,12 @@ import {
   useGoogleAuth,
   isGoogleAuthConfigured,
   completeGoogleSignIn,
+  GOOGLE_AUTH_CONFIG,
 } from '../../src/services/googleAuth';
 import { tokenStorage } from '../../src/services/api';
+
+const OAUTH_RESPONSE_KEY = '@oauth_response';
+const CODE_VERIFIER_KEY = '@code_verifier';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -41,7 +46,82 @@ export default function LoginScreen() {
   const { request, response, promptAsync } = useGoogleAuth();
   const googleAuthEnabled = isGoogleAuthConfigured();
 
-  // Handle Google auth response
+  // Check for stored OAuth response from redirect page
+  useEffect(() => {
+    const checkStoredOAuthResponse = async () => {
+      try {
+        const storedResponse = await AsyncStorage.getItem(OAUTH_RESPONSE_KEY);
+        const storedCodeVerifier = await AsyncStorage.getItem(CODE_VERIFIER_KEY);
+
+        if (storedResponse && storedCodeVerifier) {
+          const { code, timestamp } = JSON.parse(storedResponse);
+
+          // Only process if response is less than 5 minutes old
+          if (Date.now() - timestamp < 5 * 60 * 1000) {
+            console.log('Found stored OAuth response, exchanging code...');
+            setIsGoogleLoading(true);
+
+            // Clear stored values
+            await AsyncStorage.multiRemove([OAUTH_RESPONSE_KEY, CODE_VERIFIER_KEY]);
+
+            // Exchange code for tokens
+            await exchangeCodeForTokens(code, storedCodeVerifier);
+          } else {
+            // Clear expired response
+            await AsyncStorage.multiRemove([OAUTH_RESPONSE_KEY, CODE_VERIFIER_KEY]);
+          }
+        }
+      } catch (error) {
+        console.error('Error checking stored OAuth response:', error);
+      }
+    };
+
+    checkStoredOAuthResponse();
+  }, []);
+
+  // Exchange authorization code for tokens
+  const exchangeCodeForTokens = async (code: string, codeVerifier: string) => {
+    try {
+      console.log('Exchanging code for tokens...');
+
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          client_id: GOOGLE_AUTH_CONFIG.androidClientId || GOOGLE_AUTH_CONFIG.webClientId,
+          code: code,
+          code_verifier: codeVerifier,
+          grant_type: 'authorization_code',
+          redirect_uri: 'com.voicetranslate.ai:/oauthredirect',
+        }).toString(),
+      });
+
+      const tokenData = await tokenResponse.json();
+      console.log('Token exchange response:', {
+        hasAccessToken: !!tokenData.access_token,
+        hasIdToken: !!tokenData.id_token,
+        error: tokenData.error,
+      });
+
+      if (tokenData.error) {
+        throw new Error(tokenData.error_description || tokenData.error);
+      }
+
+      // Complete sign-in with the tokens
+      await handleGoogleResponse({
+        accessToken: tokenData.access_token,
+        idToken: tokenData.id_token,
+      });
+    } catch (error: any) {
+      console.error('Token exchange error:', error);
+      Alert.alert('Error', 'Failed to complete Google Sign-In: ' + error.message);
+      setIsGoogleLoading(false);
+    }
+  };
+
+  // Handle Google auth response from hook
   useEffect(() => {
     console.log('Google auth response:', JSON.stringify(response, null, 2));
 
@@ -149,6 +229,12 @@ export default function LoginScreen() {
 
     setIsGoogleLoading(true);
     try {
+      // Store codeVerifier for later use in redirect handling
+      if (request.codeVerifier) {
+        console.log('Storing codeVerifier for OAuth redirect...');
+        await AsyncStorage.setItem(CODE_VERIFIER_KEY, request.codeVerifier);
+      }
+
       await promptAsync();
     } catch (error) {
       console.error('Google prompt error:', error);

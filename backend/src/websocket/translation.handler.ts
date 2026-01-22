@@ -175,11 +175,18 @@ async function handleConnection(
   // Authenticate the connection
   try {
     const authHeader = request.headers.authorization;
-    const token = extractBearerToken(authHeader);
+    let token = extractBearerToken(authHeader);
 
-    // In development, allow test mode without authentication
+    // Parse URL to check for token in query params (for mobile WebSocket connections)
     const url = new URL(request.url || '', `http://${request.headers.host}`);
+    const queryToken = url.searchParams.get('token');
     const testMode = url.searchParams.get('test') === 'true';
+
+    // If no header token, try query parameter token
+    if (!token && queryToken) {
+      token = queryToken;
+      logger.info('WebSocket using query parameter token');
+    }
 
     if (!token && testMode && process.env.NODE_ENV === 'development') {
       // Development test mode - create anonymous user
@@ -187,7 +194,7 @@ async function handleConnection(
       subscription = 'premium';
       logger.info('WebSocket test mode connection', { userId });
     } else if (!token) {
-      sendError(ws, 'UNAUTHORIZED', 'Authentication required. Use Authorization header with Bearer token.');
+      sendError(ws, 'UNAUTHORIZED', 'Authentication required. Use Authorization header with Bearer token or token query parameter.');
       ws.close(4001, 'Unauthorized');
       return;
     } else {

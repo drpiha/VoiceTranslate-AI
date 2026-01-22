@@ -95,16 +95,25 @@ const useRealGoogleAuth = () => {
     androidClientId: GOOGLE_AUTH_CONFIG.androidClientId,
     iosClientId: GOOGLE_AUTH_CONFIG.iosClientId,
     expoClientId: GOOGLE_AUTH_CONFIG.expoClientId,
-    // For standalone builds, we need to specify the redirect URI
-    redirectUri: Platform.OS === 'android'
-      ? 'com.voicetranslate.ai:/oauth2redirect'
-      : undefined,
+    // Let expo-auth-session automatically generate the redirect URI from app.json scheme
+    // For Android: voicetranslate:/oauth2redirect (based on scheme in app.json)
   });
+
+  // Log request details for debugging
+  if (request) {
+    console.log('Google Auth request details:', {
+      redirectUri: request.redirectUri,
+      codeVerifier: !!request.codeVerifier,
+      state: request.state,
+      url: request.url,
+    });
+  }
 
   // Wrap promptAsync - use proxy only in Expo Go
   const wrappedPromptAsync = async (options?: any) => {
     const shouldUseProxy = isExpoGo();
     console.log('Google Auth: useProxy =', shouldUseProxy);
+    console.log('Google Auth: Starting with androidClientId =', GOOGLE_AUTH_CONFIG.androidClientId);
     return promptAsync({
       ...options,
       useProxy: shouldUseProxy,

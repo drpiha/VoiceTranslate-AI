@@ -1,6 +1,6 @@
 import { Audio } from 'expo-av';
 import { Recording } from 'expo-av/build/Audio';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 
 // Optimized VAD configuration for fast speech recognition
