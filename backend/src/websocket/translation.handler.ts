@@ -194,9 +194,10 @@ async function handleConnection(
       subscription = 'premium';
       logger.info('WebSocket test mode connection', { userId });
     } else if (!token) {
-      sendError(ws, 'UNAUTHORIZED', 'Authentication required. Use Authorization header with Bearer token or token query parameter.');
-      ws.close(4001, 'Unauthorized');
-      return;
+      // Allow guest/anonymous users with free tier limits
+      userId = `guest-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      subscription = 'free';
+      logger.info('WebSocket guest connection', { userId });
     } else {
       const payload = verifyAccessToken(token);
       userId = payload.userId;
