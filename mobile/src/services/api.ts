@@ -8,6 +8,17 @@ const TOKEN_KEY = 'vt_access_token';
 const REFRESH_KEY = 'vt_refresh_token';
 
 // Cross-platform token storage (works on web and native)
+// Helper to decode JWT and check expiration
+function isTokenExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    // Check if token expires in less than 60 seconds
+    return payload.exp * 1000 < Date.now() + 60000;
+  } catch {
+    return true;
+  }
+}
+
 export const tokenStorage = {
   async getAccessToken(): Promise<string | null> {
     try {
@@ -45,6 +56,74 @@ export const tokenStorage = {
       const SecureStore = require('expo-secure-store');
       await SecureStore.deleteItemAsync(TOKEN_KEY);
       await SecureStore.deleteItemAsync(REFRESH_KEY);
+    }
+  },
+
+  // Get a valid access token, refreshing if expired
+  // Returns the existing token even if refresh fails (keeps user logged in)
+  async getValidAccessToken(): Promise<string | null> {
+    const accessToken = await this.getAccessToken();
+
+    if (!accessToken) {
+      console.log('No access token found');
+      return null;
+    }
+
+    // Check if token is expired or about to expire
+    if (!isTokenExpired(accessToken)) {
+      return accessToken;
+    }
+
+    console.log('Access token expired, attempting refresh...');
+
+    // Try to refresh the token
+    const refreshToken = await this.getRefreshToken();
+    if (!refreshToken) {
+      console.log('No refresh token available');
+      // Still return expired access token - let API calls handle the 401
+      return accessToken;
+    }
+
+    try {
+      // Add timeout for refresh request
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.log('Token refresh failed:', response.status);
+        // Only clear tokens on explicit auth rejection (401/403)
+        if (response.status === 401 || response.status === 403) {
+          await this.clearTokens();
+          return null;
+        }
+        // Server error - keep existing token
+        return accessToken;
+      }
+
+      const data = await response.json();
+      const newTokens = data.data?.tokens || data.tokens;
+
+      if (newTokens?.accessToken && newTokens?.refreshToken) {
+        await this.setTokens(newTokens.accessToken, newTokens.refreshToken);
+        console.log('Token refreshed successfully');
+        return newTokens.accessToken;
+      }
+
+      console.log('Invalid refresh response, keeping existing token');
+      return accessToken;
+    } catch (error: any) {
+      // Network error or timeout - keep existing token, don't log out user
+      console.log('Token refresh network error (keeping session):', error.message);
+      return accessToken;
     }
   },
 };

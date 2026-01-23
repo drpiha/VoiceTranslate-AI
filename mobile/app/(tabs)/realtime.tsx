@@ -10,6 +10,7 @@ import {
   Animated,
   Easing,
   Dimensions,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useUserStore } from '../../src/store/userStore';
+import { useHistoryStore } from '../../src/store/historyStore';
 import { LanguageSelector } from '../../src/components/LanguageSelector';
 import { translationService, RealtimeTranslationResult } from '../../src/services/translationService';
 import { audioService, AudioSegment } from '../../src/services/audioService';
@@ -178,6 +180,7 @@ export default function RealtimeScreen() {
   const colorScheme = useColorScheme();
   const { theme: themePreference, hapticFeedback } = useSettingsStore();
   const { user } = useUserStore();
+  const { addTranslation } = useHistoryStore();
 
   const [isConnected, setIsConnected] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -189,6 +192,10 @@ export default function RealtimeScreen() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [detectedLang, setDetectedLang] = useState<string | null>(null);
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline' | 'starting'>('online');
+  const [editedTranscript, setEditedTranscript] = useState<string | null>(null);
+  const [editedTranslation, setEditedTranslation] = useState<string | null>(null);
+  const [isRetranslating, setIsRetranslating] = useState(false);
 
   const sourceScrollRef = useRef<ScrollView>(null);
   const targetScrollRef = useRef<ScrollView>(null);
@@ -236,10 +243,14 @@ export default function RealtimeScreen() {
   // Auto-scroll to bottom when new segments arrive
   useEffect(() => {
     if (segments.length > 0) {
+      // Immediate scroll
+      sourceScrollRef.current?.scrollToEnd({ animated: false });
+      targetScrollRef.current?.scrollToEnd({ animated: false });
+      // Also delayed scroll to catch any layout changes
       setTimeout(() => {
         sourceScrollRef.current?.scrollToEnd({ animated: true });
         targetScrollRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+      }, 150);
     }
   }, [segments]);
 
@@ -346,16 +357,19 @@ export default function RealtimeScreen() {
 
   const connectWebSocket = useCallback(() => {
     setConnectionError(null);
+    setBackendStatus('checking');
     translationService.connectRealtimeWebSocket(
       handleWebSocketMessage,
       (error) => {
         console.error('WebSocket connection error:', error);
-        setConnectionError('Connection failed');
+        setConnectionError('Connection failed. Tap retry or try again.');
         setIsConnected(false);
         setIsListening(false);
+        setBackendStatus('offline');
       },
       () => {
         setIsConnected(true);
+        setBackendStatus('online');
         translationService.startRealtimeSession(sourceLanguage, targetLanguage);
       }
     );
@@ -364,13 +378,24 @@ export default function RealtimeScreen() {
   const startListening = async () => {
     handleHaptic();
     animateButtonPress();
+
+    // Don't block - let user try, WebSocket will show error if it fails
     setSegments([]);
     setDetectedLang(null);
     setConnectionError(null);
 
-    if (!translationService.isConnected()) {
-      connectWebSocket();
+    // Always start a fresh session - disconnect and reconnect
+    // This ensures language settings are properly sent to backend
+    if (translationService.isConnected()) {
+      console.log('Disconnecting existing WebSocket for fresh session...');
+      translationService.disconnect();
+      setIsConnected(false);
+      // Small delay to ensure clean disconnect
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
+
+    // Now connect fresh with current language settings
+    connectWebSocket();
 
     const success = await audioService.startRealtimeMode(
       handleSegmentReady,
@@ -401,12 +426,54 @@ export default function RealtimeScreen() {
     }
   };
 
-  const clearSegments = () => {
+  const clearSegments = async () => {
     handleHaptic();
+
+    // Save to history if there's content
+    const currentTranscript = segments.map(s => s.transcript).filter(Boolean).join(' ').trim();
+    const currentTranslation = segments.map(s => s.translation).filter(Boolean).join(' ').trim();
+
+    if (currentTranscript || currentTranslation) {
+      const finalSourceLang = detectedLang || (sourceLanguage === 'auto' ? 'en' : sourceLanguage);
+      addTranslation({
+        sourceText: currentTranscript || '[Audio]',
+        translatedText: currentTranslation || '',
+        sourceLanguage: finalSourceLang,
+        targetLanguage: targetLanguage,
+      });
+      console.log('Saved to history:', { transcript: currentTranscript.substring(0, 50) });
+    }
+
+    // Stop audio recording if active
+    if (isListening) {
+      audioService.stopRealtimeMode();
+      setIsListening(false);
+      setIsSpeaking(false);
+      setCurrentLevel(-100);
+    }
+
+    // Reset segment counter for fresh IDs
+    audioService.resetSegmentCount();
+
+    // Disconnect WebSocket to ensure fresh session
+    if (translationService.isConnected()) {
+      console.log('Disconnecting WebSocket for clean reset...');
+      translationService.disconnect();
+      setIsConnected(false);
+    }
+
+    // Clear all state
     setSegments([]);
     setDetectedLang(null);
+    setIsProcessing(false);
+    setConnectionError(null);
+    setEditedTranscript(null);
+    setEditedTranslation(null);
+
+    console.log('Session cleared - ready for fresh start');
   };
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       audioService.stopRealtimeMode();
@@ -421,10 +488,69 @@ export default function RealtimeScreen() {
     return 'left';
   };
 
+  // Swap source and target languages
+  const handleSwapLanguages = async () => {
+    handleHaptic();
+
+    // Can't swap if source is auto
+    if (sourceLanguage === 'auto' && !detectedLang) {
+      Alert.alert('Cannot Swap', 'Please select a specific source language or speak first to detect the language.');
+      return;
+    }
+
+    const actualSourceLang = detectedLang || sourceLanguage;
+    const currentTranscript = editedTranscript ?? mergedTranscript;
+    const currentTranslation = editedTranslation ?? mergedTranslation;
+
+    // Swap languages
+    setSourceLanguage(targetLanguage);
+    setTargetLanguage(actualSourceLang === 'auto' ? 'en' : actualSourceLang);
+    setDetectedLang(null);
+
+    // Swap content
+    if (currentTranscript || currentTranslation) {
+      setEditedTranscript(currentTranslation);
+      setEditedTranslation(currentTranscript);
+      setSegments([]);
+    }
+  };
+
+  // Retranslate content when target language changes
+  const retranslateContent = async (newTargetLang: string) => {
+    const textToTranslate = editedTranscript ?? mergedTranscript;
+    if (!textToTranslate.trim()) return;
+
+    setIsRetranslating(true);
+    try {
+      const result = await translationService.translate(
+        textToTranslate,
+        detectedLang || sourceLanguage,
+        newTargetLang
+      );
+      setEditedTranslation(result.translatedText);
+    } catch (error) {
+      console.error('Retranslation failed:', error);
+      Alert.alert('Translation Error', 'Failed to translate. Please try again.');
+    } finally {
+      setIsRetranslating(false);
+    }
+  };
+
+  // Handle target language change with retranslation
+  const handleTargetLanguageChange = (newLang: string) => {
+    setTargetLanguage(newLang);
+    const hasContent = (editedTranscript ?? mergedTranscript).trim().length > 0;
+    if (hasContent && !isListening) {
+      retranslateContent(newLang);
+    }
+  };
+
   // Merge all transcripts and translations
   const mergedTranscript = segments.map(s => s.transcript).filter(Boolean).join(' ');
   const mergedTranslation = segments.map(s => s.translation).filter(Boolean).join(' ');
-  const hasContent = mergedTranscript.length > 0 || mergedTranslation.length > 0;
+  const displayTranscript = editedTranscript ?? mergedTranscript;
+  const displayTranslation = editedTranslation ?? mergedTranslation;
+  const hasContent = displayTranscript.length > 0 || displayTranslation.length > 0;
   const isCurrentlyUpdating = segments.some(s => !s.isFinal);
 
   // Get language info
@@ -454,14 +580,22 @@ export default function RealtimeScreen() {
         <View style={styles.headerRight}>
           <View style={[
             styles.statusBadge,
-            { backgroundColor: isConnected ? theme.colors.success : theme.colors.textTertiary }
+            { backgroundColor: isConnected ? theme.colors.success :
+              backendStatus === 'checking' ? theme.colors.primary :
+              backendStatus === 'offline' ? theme.colors.error :
+              theme.colors.success }
           ]}>
             <View style={[
               styles.statusDot,
-              { backgroundColor: isConnected ? theme.colors.successLight : theme.colors.disabled }
+              { backgroundColor: isConnected ? theme.colors.successLight :
+                backendStatus === 'checking' ? theme.colors.primaryLight :
+                backendStatus === 'offline' ? '#FCA5A5' :
+                theme.colors.successLight }
             ]} />
             <Text style={styles.statusText}>
-              {isConnected ? 'Live' : 'Offline'}
+              {isConnected ? 'Live' :
+               backendStatus === 'checking' ? 'Connecting...' :
+               backendStatus === 'offline' ? 'Offline' : 'Ready'}
             </Text>
           </View>
         </View>
@@ -481,16 +615,16 @@ export default function RealtimeScreen() {
             />
           </View>
 
-          <View style={styles.arrowContainer}>
+          <TouchableOpacity onPress={handleSwapLanguages} style={styles.arrowContainer}>
             <LinearGradient
               colors={[theme.colors.gradient1, theme.colors.gradient2] as [string, string]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.arrowBadge}
             >
-              <Ionicons name="arrow-forward" size={16} color="#FFF" />
+              <Ionicons name="swap-horizontal" size={18} color="#FFF" />
             </LinearGradient>
-          </View>
+          </TouchableOpacity>
 
           <View style={styles.languageSelectorWrapper}>
             <View style={styles.languageLabelRow}>
@@ -499,7 +633,7 @@ export default function RealtimeScreen() {
             </View>
             <LanguageSelector
               value={targetLanguage}
-              onChange={setTargetLanguage}
+              onChange={handleTargetLanguageChange}
               excludeAuto
             />
           </View>
@@ -532,17 +666,24 @@ export default function RealtimeScreen() {
           <ScrollView
             ref={sourceScrollRef}
             style={styles.panelContent}
-            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.panelContentContainer}
+            showsVerticalScrollIndicator={true}
           >
             {hasContent ? (
-              <Text style={[
-                styles.panelText,
-                styles.sourceText,
-                { color: theme.colors.text, textAlign: getTextAlign(detectedLang || undefined) }
-              ]}>
-                {mergedTranscript}
-                {isCurrentlyUpdating && <Text style={{ color: theme.colors.accent }}> ...</Text>}
-              </Text>
+              <TextInput
+                style={[
+                  styles.panelText,
+                  styles.sourceText,
+                  styles.editableText,
+                  { color: theme.colors.text, textAlign: getTextAlign(detectedLang || undefined) }
+                ]}
+                value={displayTranscript + (isCurrentlyUpdating ? ' ...' : '')}
+                onChangeText={(text) => setEditedTranscript(text.replace(' ...', ''))}
+                multiline
+                placeholder="Spoken text will appear here"
+                placeholderTextColor={theme.colors.textTertiary}
+                editable={!isListening}
+              />
             ) : (
               <View style={styles.emptyPanel}>
                 {isListening ? (
@@ -585,30 +726,47 @@ export default function RealtimeScreen() {
               <Text style={[styles.panelLangName, { color: theme.colors.accent }]}>
                 {targetLangInfo?.name || targetLanguage.toUpperCase()}
               </Text>
+              {isRetranslating && (
+                <View style={[styles.liveDot, { backgroundColor: theme.colors.accent }]} />
+              )}
             </View>
           </View>
           <ScrollView
             ref={targetScrollRef}
             style={styles.panelContent}
-            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.panelContentContainer}
+            showsVerticalScrollIndicator={true}
           >
-            {mergedTranslation ? (
-              <Text style={[
-                styles.panelText,
-                styles.translationText,
-                { color: theme.colors.text, textAlign: getTextAlign(targetLanguage) }
-              ]}>
-                {mergedTranslation}
-                {isCurrentlyUpdating && <Text style={{ color: theme.colors.accent, fontWeight: '400' }}> ...</Text>}
-              </Text>
+            {displayTranslation ? (
+              <TextInput
+                style={[
+                  styles.panelText,
+                  styles.translationText,
+                  styles.editableText,
+                  { color: theme.colors.text, textAlign: getTextAlign(targetLanguage) }
+                ]}
+                value={displayTranslation + (isCurrentlyUpdating ? ' ...' : '')}
+                onChangeText={(text) => setEditedTranslation(text.replace(' ...', ''))}
+                multiline
+                placeholder="Translation will appear here"
+                placeholderTextColor={theme.colors.textTertiary}
+                editable={!isListening && !isRetranslating}
+              />
             ) : (
               <View style={styles.emptyPanel}>
                 <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                  Translation will appear here
+                  {isRetranslating ? 'Translating...' : 'Translation will appear here'}
                 </Text>
               </View>
             )}
           </ScrollView>
+          {isRetranslating && (
+            <View style={styles.processingIndicator}>
+              <Animated.View style={{ transform: [{ rotate: spin }] }}>
+                <Ionicons name="sync" size={14} color={theme.colors.accent} />
+              </Animated.View>
+            </View>
+          )}
         </View>
       </View>
 
@@ -808,17 +966,30 @@ const styles = StyleSheet.create({
   },
   panelContent: {
     flex: 1,
-    padding: 14,
+    padding: 16,
+  },
+  panelContentContainer: {
+    flexGrow: 1,
+    paddingBottom: 24,
   },
   panelText: {
-    fontSize: 16,
-    lineHeight: 26,
+    fontSize: 20,
+    lineHeight: 32,
+    letterSpacing: 0.3,
   },
   sourceText: {
     fontWeight: '400',
   },
   translationText: {
     fontWeight: '500',
+    fontSize: 22,
+    lineHeight: 34,
+  },
+  editableText: {
+    flex: 1,
+    textAlignVertical: 'top',
+    padding: 0,
+    margin: 0,
   },
   emptyPanel: {
     flex: 1,
@@ -827,9 +998,10 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: 16,
     textAlign: 'center',
-    marginTop: 8,
+    marginTop: 10,
+    fontWeight: '400',
   },
   processingIndicator: {
     position: 'absolute',

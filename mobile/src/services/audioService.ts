@@ -3,25 +3,25 @@ import { Recording } from 'expo-av/build/Audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 
-// Optimized VAD configuration for fast speech recognition
+// Optimized VAD configuration for reliable speech recognition
 const VAD_CONFIG = {
-  // Audio level thresholds
-  SILENCE_THRESHOLD: -45, // dB threshold for silence detection (more sensitive)
-  SPEECH_THRESHOLD: -35, // dB threshold for definite speech
+  // Audio level thresholds - more tolerant
+  SILENCE_THRESHOLD: -50, // dB threshold for silence detection (more sensitive)
+  SPEECH_THRESHOLD: -40, // dB threshold for definite speech
 
-  // Timing configuration (optimized for fast speech)
-  SILENCE_DURATION_MS: 400, // Reduced: faster segment finalization
-  SPEECH_START_DELAY_MS: 50, // Delay before confirming speech start
-  MIN_SEGMENT_DURATION_MS: 300, // Allow shorter segments for fast speakers
-  MAX_SEGMENT_DURATION_MS: 6000, // Reduced: more frequent segments = better context
-  METERING_INTERVAL_MS: 50, // Faster metering for responsive VAD
+  // Timing configuration - longer segments for better context
+  SILENCE_DURATION_MS: 800, // Longer pause before segment ends
+  SPEECH_START_DELAY_MS: 100, // Delay before confirming speech start
+  MIN_SEGMENT_DURATION_MS: 500, // Minimum segment length
+  MAX_SEGMENT_DURATION_MS: 10000, // Allow longer segments (10 seconds)
+  METERING_INTERVAL_MS: 100, // Less frequent metering to reduce overhead
 
   // Audio overlap for boundary word preservation
   OVERLAP_DURATION_MS: 300, // Overlap with previous segment to catch boundary words
 
   // Adaptive threshold
-  NOISE_FLOOR_SAMPLES: 20, // Samples to calculate ambient noise
-  NOISE_FLOOR_MARGIN_DB: 10, // dB above noise floor to detect speech
+  NOISE_FLOOR_SAMPLES: 30, // More samples for better noise estimation
+  NOISE_FLOOR_MARGIN_DB: 8, // dB above noise floor to detect speech
 };
 
 // Web Audio VAD config (optimized)
@@ -601,19 +601,27 @@ class AudioService {
       return;
     }
 
+    console.log('Stopping real-time mode...');
+
+    // CRITICAL: Set flag first to prevent any new operations
     this.isRealtimeMode = false;
 
+    // Clear metering interval BEFORE stopping recording
     if (this.meteringInterval) {
       clearInterval(this.meteringInterval);
       this.meteringInterval = null;
+      console.log('Metering interval cleared');
     }
 
+    // Clear callbacks to prevent any late calls
+    this.onSegmentReady = undefined;
+    this.onMeteringUpdate = undefined;
+
+    // Now stop recording
     if (this.recording) {
       this.stopSegmentRecording().catch(console.error);
     }
 
-    this.onSegmentReady = undefined;
-    this.onMeteringUpdate = undefined;
     this.isSpeaking = false;
 
     // Reset speech state machine
@@ -689,8 +697,11 @@ class AudioService {
       this.nativeSpeechStartTime = 0;
 
       // Start metering interval with optimized timing
+      console.log('Starting metering interval with', VAD_CONFIG.METERING_INTERVAL_MS, 'ms interval');
       this.meteringInterval = setInterval(() => {
-        this.checkVoiceActivity();
+        this.checkVoiceActivity().catch(err => {
+          console.error('Voice activity check failed:', err);
+        });
       }, VAD_CONFIG.METERING_INTERVAL_MS);
 
     } catch (error) {
@@ -710,7 +721,13 @@ class AudioService {
    * Check voice activity with improved state machine
    */
   private async checkVoiceActivity(): Promise<void> {
-    if (!this.recording || !this.isRealtimeMode) return;
+    // Early exit if not in realtime mode or no recording
+    if (!this.isRealtimeMode) return;
+    if (!this.recording) {
+      // Recording doesn't exist but we're still in realtime mode
+      // This can happen during segment transitions - just skip this check
+      return;
+    }
 
     try {
       const status = await this.recording.getStatusAsync();
@@ -799,15 +816,27 @@ class AudioService {
    * Finalize current segment and start a new one
    */
   private async finalizeCurrentSegment(): Promise<void> {
-    if (!this.recording || !this.isRealtimeMode) return;
+    // Double check we're still in realtime mode
+    if (!this.isRealtimeMode) {
+      console.log('Not in realtime mode, skipping segment finalization');
+      return;
+    }
+
+    if (!this.recording) {
+      console.log('No recording to finalize');
+      return;
+    }
+
+    // Store reference and clear immediately to prevent race conditions
+    const currentRecording = this.recording;
+    this.recording = null;
 
     try {
       const segmentDuration = Date.now() - this.segmentStartTime;
 
       // Stop current recording
-      await this.recording.stopAndUnloadAsync();
-      const uri = this.recording.getURI();
-      this.recording = null;
+      await currentRecording.stopAndUnloadAsync();
+      const uri = currentRecording.getURI();
 
       if (uri && segmentDuration >= VAD_CONFIG.MIN_SEGMENT_DURATION_MS) {
         // Convert to base64 - using string literal for compatibility
@@ -883,6 +912,14 @@ class AudioService {
    */
   getSegmentCount(): number {
     return this.segmentCount;
+  }
+
+  /**
+   * Reset segment counter (for fresh sessions)
+   */
+  resetSegmentCount(): void {
+    this.segmentCount = 0;
+    console.log('Segment counter reset');
   }
 
   /**

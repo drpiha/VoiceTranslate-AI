@@ -36,6 +36,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [authProcessing, setAuthProcessing] = useState(false);
   const colorScheme = useColorScheme();
   const { theme: themePreference } = useSettingsStore();
   const { login, setUser } = useUserStore();
@@ -79,12 +80,33 @@ export default function LoginScreen() {
     checkStoredOAuthResponse();
   }, []);
 
+  // Helper function for fetch with timeout
+  const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number = 15000) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('Connection timed out. Please check your internet and try again.');
+      }
+      throw error;
+    }
+  };
+
   // Exchange authorization code for tokens
   const exchangeCodeForTokens = async (code: string, codeVerifier: string) => {
     try {
       console.log('Exchanging code for tokens...');
 
-      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      const tokenResponse = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -96,7 +118,7 @@ export default function LoginScreen() {
           grant_type: 'authorization_code',
           redirect_uri: 'com.voicetranslate.ai:/oauthredirect',
         }).toString(),
-      });
+      }, 15000);
 
       const tokenData = await tokenResponse.json();
       console.log('Token exchange response:', {
@@ -116,7 +138,7 @@ export default function LoginScreen() {
       });
     } catch (error: any) {
       console.error('Token exchange error:', error);
-      Alert.alert('Error', 'Failed to complete Google Sign-In: ' + error.message);
+      Alert.alert('Google Sign-In Failed', error.message || 'Failed to complete sign-in. Please try again.');
       setIsGoogleLoading(false);
     }
   };
@@ -142,6 +164,12 @@ export default function LoginScreen() {
   }, [response]);
 
   const handleGoogleResponse = async (authentication: any) => {
+    // Prevent duplicate processing
+    if (authProcessing) {
+      console.log('Auth already processing, skipping...');
+      return;
+    }
+
     console.log('handleGoogleResponse called with:', authentication);
 
     if (!authentication) {
@@ -149,6 +177,8 @@ export default function LoginScreen() {
       setIsGoogleLoading(false);
       return;
     }
+
+    setAuthProcessing(true);
 
     try {
       console.log('Calling completeGoogleSignIn...');
@@ -175,7 +205,11 @@ export default function LoginScreen() {
       router.replace('/(tabs)');
     } catch (error: any) {
       console.error('Google sign-in completion error:', error);
-      Alert.alert('Error', error.message || 'Failed to complete Google Sign-In');
+      // Don't show error for duplicate auth attempts
+      if (!error.message?.includes('already in progress')) {
+        Alert.alert('Error', error.message || 'Failed to complete Google Sign-In');
+      }
+      setAuthProcessing(false);
     } finally {
       setIsGoogleLoading(false);
     }
@@ -227,8 +261,48 @@ export default function LoginScreen() {
       return;
     }
 
+    // Check backend connectivity first
     setIsGoogleLoading(true);
     try {
+      const { getApiBaseUrl } = await import('../../src/config/api.config');
+      const baseUrl = getApiBaseUrl();
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      try {
+        const healthUrl = baseUrl.replace('/api', '') + '/health';
+        const healthResponse = await fetch(healthUrl, {
+          method: 'GET',
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (!healthResponse.ok) {
+          setIsGoogleLoading(false);
+          Alert.alert(
+            'Server Error',
+            'The server is experiencing issues. Please try again later.'
+          );
+          return;
+        }
+      } catch (healthError: any) {
+        clearTimeout(timeoutId);
+        setIsGoogleLoading(false);
+        if (healthError.name === 'AbortError') {
+          Alert.alert(
+            'Server Starting',
+            'The server is waking up. This may take up to 30 seconds. Please wait and try again.'
+          );
+        } else {
+          Alert.alert(
+            'Connection Error',
+            'Cannot connect to server. Please check your internet connection and try again.'
+          );
+        }
+        return;
+      }
+
       // Store codeVerifier for later use in redirect handling
       if (request.codeVerifier) {
         console.log('Storing codeVerifier for OAuth redirect...');

@@ -198,8 +198,8 @@ class TranslationService {
     onConnected?: () => void
   ): Promise<void> {
     try {
-      // Get auth token for WebSocket authentication
-      const accessToken = await tokenStorage.getAccessToken();
+      // Get valid (non-expired) auth token for WebSocket authentication
+      const accessToken = await tokenStorage.getValidAccessToken();
 
       // Build WebSocket URL with auth token
       let url = `${WS_BASE_URL}/translate`;

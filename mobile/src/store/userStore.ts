@@ -83,12 +83,39 @@ export const useUserStore = create<UserState>((set) => ({
   loadUser: async () => {
     try {
       const userStr = await AsyncStorage.getItem('user');
-      const token = await tokenStorage.getAccessToken();
 
-      if (userStr && token) {
-        const user = JSON.parse(userStr);
+      if (!userStr) {
+        console.log('No stored user found');
+        set({ isLoading: false });
+        return;
+      }
+
+      const user = JSON.parse(userStr);
+
+      // Guest users don't need tokens
+      if (user.id?.startsWith('guest-')) {
+        console.log('Guest user session restored');
         set({ user, isAuthenticated: true, isLoading: false });
+        return;
+      }
+
+      // Check if we have any token (access or refresh)
+      const accessToken = await tokenStorage.getAccessToken();
+      const refreshToken = await tokenStorage.getRefreshToken();
+
+      // If we have stored user and any token, restore the session
+      if (accessToken || refreshToken) {
+        console.log('User session restored:', user.email);
+        set({ user, isAuthenticated: true, isLoading: false });
+
+        // Try to refresh token in background (don't block)
+        tokenStorage.getValidAccessToken().catch(() => {
+          console.log('Background token refresh failed, will retry on next API call');
+        });
       } else {
+        // No tokens at all, clear stored user
+        console.log('No tokens found, clearing session');
+        await AsyncStorage.removeItem('user');
         set({ isLoading: false });
       }
     } catch (error) {
