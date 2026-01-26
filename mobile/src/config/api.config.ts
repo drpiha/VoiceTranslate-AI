@@ -1,17 +1,18 @@
 /**
  * API Configuration
  *
- * Update PRODUCTION_API_URL after deploying backend to Railway
+ * VoiceTranslate AI Backend - Hostinger VPS
  */
 
 // =============================================================================
-// PRODUCTION URL - UPDATE THIS AFTER RAILWAY DEPLOYMENT
+// PRODUCTION URL - Hostinger VPS
 // =============================================================================
-// After deploying to Railway, you'll get a URL like:
-// https://voicetranslate-backend-production.up.railway.app
-//
-// Update this variable with your actual Railway URL:
-export const PRODUCTION_API_URL = 'https://voicetranslate-backend.onrender.com';
+export const PRODUCTION_API_URL = 'https://api.srv1150632.hstgr.cloud';
+
+// =============================================================================
+// Set to true to use production backend even in development mode
+// =============================================================================
+const USE_PRODUCTION_IN_DEV = true;
 
 // =============================================================================
 // DO NOT MODIFY BELOW THIS LINE
@@ -20,7 +21,7 @@ export const PRODUCTION_API_URL = 'https://voicetranslate-backend.onrender.com';
 import { Platform } from 'react-native';
 
 // Check if running in development mode
-const isDevelopment = __DEV__;
+const isDevelopment = __DEV__ && !USE_PRODUCTION_IN_DEV;
 
 // Local development configuration
 const DEV_CONFIG = {
