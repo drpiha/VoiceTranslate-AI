@@ -10,8 +10,10 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
+import ReAnimated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme } from '../constants/theme';
+import { useDebouncedSpeaking } from '../hooks/useDebouncedSpeaking';
 
 const RTL_LANGUAGES = ['ar', 'he', 'fa', 'ur'];
 
@@ -162,6 +164,25 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
   const newSentenceOpacity = useRef(new Animated.Value(1)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
 
+  // Debounced speaking state to prevent flickering
+  const displaySpeaking = useDebouncedSpeaking(isSpeaking, isListening, 500);
+
+  // Animated flex for smooth panel expansion
+  const flexValue = useSharedValue(1);
+  useEffect(() => {
+    if (isExpanded) {
+      flexValue.value = withTiming(3, { duration: 300 });
+    } else if (isOtherExpanded) {
+      flexValue.value = withTiming(0.5, { duration: 300 });
+    } else {
+      flexValue.value = withTiming(1, { duration: 300 });
+    }
+  }, [isExpanded, isOtherExpanded]);
+
+  const animatedFlexStyle = useAnimatedStyle(() => ({
+    flex: flexValue.value,
+  }));
+
   const currentText = currentSegment?.[field] || '';
   const hasContent = hasContentProp ?? (finalizedSentences.length > 0 || currentText.length > 0);
   const isRtl = RTL_LANGUAGES.includes(languageCode);
@@ -224,10 +245,9 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
   const sentenceCount = finalizedSentences.length + (currentText ? 1 : 0);
 
   return (
-    <Animated.View style={[
+    <ReAnimated.View style={[
       styles.panel,
-      isExpanded && styles.panelExpanded,
-      isOtherExpanded && styles.panelCollapsed,
+      animatedFlexStyle,
       { backgroundColor: theme.colors.card, borderColor: accentColor + '30' },
     ]}>
       {/* Panel Header */}
@@ -314,12 +334,12 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
               <>
                 <AudioVisualizer
                   isActive={isListening}
-                  isSpeaking={isSpeaking}
+                  isSpeaking={displaySpeaking}
                   primaryColor={theme.colors.primary}
                   accentColor={theme.colors.accent}
                 />
                 <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                  {isSpeaking ? emptySpeakingText : emptyListeningText}
+                  {displaySpeaking ? emptySpeakingText : emptyListeningText}
                 </Text>
               </>
             ) : (
@@ -352,7 +372,7 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
           <Ionicons name="chevron-down" size={16} color="#FFF" />
         </TouchableOpacity>
       )}
-    </Animated.View>
+    </ReAnimated.View>
   );
 };
 
@@ -363,13 +383,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
     minHeight: 120,
-  },
-  panelExpanded: {
-    flex: 3,
-  },
-  panelCollapsed: {
-    flex: 0.5,
-    minHeight: 80,
   },
   panelHeader: {
     flexDirection: 'row',

@@ -78,8 +78,14 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   
   clearHistory: async () => {
     try {
-      await AsyncStorage.removeItem('translations');
-      set({ translations: [] });
+      const favorites = get().translations.filter(t => t.isFavorite);
+      if (favorites.length > 0) {
+        await AsyncStorage.setItem('translations', JSON.stringify(favorites));
+        set({ translations: favorites });
+      } else {
+        await AsyncStorage.removeItem('translations');
+        set({ translations: [] });
+      }
     } catch (error) {
       console.error('Clear history error:', error);
     }

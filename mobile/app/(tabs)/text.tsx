@@ -33,6 +33,7 @@ import Animated, {
   useSharedValue,
   withSpring,
   withSequence,
+  FadeInDown,
 } from 'react-native-reanimated';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -52,6 +53,7 @@ export default function TextScreen() {
   const { user } = useUserStore();
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [tipsExpanded, setTipsExpanded] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isBackendConnected, setIsBackendConnected] = useState(true);
   const recordingTimer = useRef<NodeJS.Timeout | null>(null);
@@ -499,40 +501,54 @@ export default function TextScreen() {
               </View>
             )}
 
-            {/* Quick Tips */}
+            {/* Quick Tips - Collapsible */}
             {!sourceText && !translatedText && (
               <View style={[
                 styles.tipsContainer,
                 { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.6)' : 'rgba(255, 255, 255, 0.8)' }
               ]}>
-                <View style={styles.tipsHeader}>
-                  <Ionicons name="bulb" size={22} color="#F59E0B" />
+                <TouchableOpacity
+                  onPress={() => setTipsExpanded(!tipsExpanded)}
+                  style={styles.tipsHeader}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="bulb" size={18} color="#F59E0B" />
                   <Text style={[styles.tipsTitle, { color: theme.colors.text }]}>Quick Tips</Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.1)' }]}>
-                    <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
-                  </View>
-                  <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
-                    Type or paste text above to translate instantly
-                  </Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(236, 72, 153, 0.1)' }]}>
-                    <Ionicons name="swap-horizontal" size={18} color="#EC4899" />
-                  </View>
-                  <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
-                    Tap the swap button to switch languages
-                  </Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(34, 197, 94, 0.1)' }]}>
-                    <Ionicons name="mic" size={18} color="#22C55E" />
-                  </View>
-                  <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
-                    Use voice input for hands-free translation
-                  </Text>
-                </View>
+                  <View style={{ flex: 1 }} />
+                  <Ionicons
+                    name={tipsExpanded ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color={theme.colors.textTertiary}
+                  />
+                </TouchableOpacity>
+                {tipsExpanded && (
+                  <Animated.View entering={FadeInDown.duration(200)}>
+                    <View style={styles.tipItem}>
+                      <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.1)' }]}>
+                        <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
+                      </View>
+                      <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
+                        Type or paste text above to translate instantly
+                      </Text>
+                    </View>
+                    <View style={styles.tipItem}>
+                      <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(236, 72, 153, 0.1)' }]}>
+                        <Ionicons name="swap-horizontal" size={18} color="#EC4899" />
+                      </View>
+                      <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
+                        Tap the swap button to switch languages
+                      </Text>
+                    </View>
+                    <View style={styles.tipItem}>
+                      <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(34, 197, 94, 0.1)' }]}>
+                        <Ionicons name="mic" size={18} color="#22C55E" />
+                      </View>
+                      <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
+                        Use voice input for hands-free translation
+                      </Text>
+                    </View>
+                  </Animated.View>
+                )}
               </View>
             )}
           </ScrollView>
@@ -761,23 +777,23 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   tipsContainer: {
-    borderRadius: 20,
-    padding: 20,
+    borderRadius: 16,
+    padding: 14,
   },
   tipsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 18,
+    gap: 8,
   },
   tipsTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '600',
   },
   tipItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 10,
+    marginTop: 10,
   },
   tipIconContainer: {
     width: 36,

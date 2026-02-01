@@ -209,8 +209,41 @@ export default function LiveScreen() {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    connectWebSocket();
+    // Await WebSocket connection before starting audio
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Connection timeout'));
+        }, 5000);
 
+        setConnectionError(null);
+        setBackendStatus('checking');
+        translationService.connectRealtimeWebSocket(
+          handleWebSocketMessage,
+          (error) => {
+            clearTimeout(timeout);
+            console.error('WebSocket connection error:', error);
+            setBackendStatus('offline');
+            reject(error);
+          },
+          () => {
+            clearTimeout(timeout);
+            setIsConnected(true);
+            setBackendStatus('online');
+            reconnectAttempts.current = 0;
+            translationService.startRealtimeSession(sourceLanguage, targetLanguage);
+            resolve();
+          }
+        );
+      });
+    } catch (error) {
+      setConnectionError('Connection failed. Tap retry or try again.');
+      setIsConnected(false);
+      setIsListening(false);
+      return;
+    }
+
+    // Only start audio AFTER WebSocket is confirmed connected
     const success = await audioService.startRealtimeMode(
       handleSegmentReady,
       handleMeteringUpdate

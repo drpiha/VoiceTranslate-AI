@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppSettings, VadSensitivity } from '../types';
+import { AppSettings, VadSensitivity, TranslationProvider } from '../types';
 import { useColorScheme } from 'react-native';
 
 interface SettingsState extends AppSettings {
@@ -14,6 +14,8 @@ interface SettingsState extends AppSettings {
   setSaveHistory: (enabled: boolean) => Promise<void>;
   setHapticFeedback: (enabled: boolean) => Promise<void>;
   setVadSensitivity: (sensitivity: VadSensitivity) => Promise<void>;
+  setTranslationProvider: (provider: TranslationProvider) => Promise<void>;
+  setDeeplApiKey: (key: string) => Promise<void>;
   addRecentLanguage: (language: string) => Promise<void>;
   loadSettings: () => Promise<void>;
   getEffectiveTheme: () => 'light' | 'dark';
@@ -27,6 +29,8 @@ const defaultSettings: AppSettings = {
   saveHistory: true,
   hapticFeedback: true,
   vadSensitivity: 'medium',
+  translationProvider: 'backend',
+  deeplApiKey: '',
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -115,6 +119,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  setTranslationProvider: async (provider) => {
+    try {
+      await AsyncStorage.setItem('translationProvider', provider);
+      set({ translationProvider: provider });
+    } catch (error) {
+      console.error('Set translation provider error:', error);
+    }
+  },
+
+  setDeeplApiKey: async (key) => {
+    try {
+      await AsyncStorage.setItem('deeplApiKey', key);
+      set({ deeplApiKey: key });
+    } catch (error) {
+      console.error('Set DeepL API key error:', error);
+    }
+  },
+
   loadSettings: async () => {
     try {
       const settings = await AsyncStorage.multiGet([
@@ -125,6 +147,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         'saveHistory',
         'hapticFeedback',
         'vadSensitivity',
+        'translationProvider',
+        'deeplApiKey',
         'recentLanguages',
       ]);
 

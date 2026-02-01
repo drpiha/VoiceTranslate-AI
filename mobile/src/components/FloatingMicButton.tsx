@@ -10,6 +10,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme } from '../constants/theme';
+import { useDebouncedSpeaking } from '../hooks/useDebouncedSpeaking';
 
 // Glowing Orb Animation
 const GlowingOrb = ({ isActive, size, color }: { isActive: boolean; size: number; color: string }) => {
@@ -97,14 +98,16 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
   isSpeaking,
   onPress,
   theme,
-  speakingLabel = 'Recording',
-  listeningLabel = 'Listening',
   idleLabel = 'Tap to start',
   size = 72,
   iconSize = 30,
 }) => {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const buttonScaleAnim = useRef(new Animated.Value(1)).current;
+  const dotColorAnim = useRef(new Animated.Value(0)).current;
+
+  // Debounce the speaking state to prevent rapid flickering
+  const displaySpeaking = useDebouncedSpeaking(isSpeaking, isListening, 500);
 
   useEffect(() => {
     if (isListening) {
@@ -120,6 +123,16 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
       pulseAnim.setValue(1);
     }
   }, [isListening]);
+
+  // Smooth animated dot color transition
+  useEffect(() => {
+    Animated.timing(dotColorAnim, {
+      toValue: displaySpeaking ? 1 : 0,
+      duration: 300,
+      useNativeDriver: false,
+      easing: Easing.inOut(Easing.ease),
+    }).start();
+  }, [displaySpeaking]);
 
   const animatePress = () => {
     Animated.sequence([
@@ -140,6 +153,11 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
     animatePress();
     onPress();
   };
+
+  const dotColor = dotColorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [theme.colors.primary, theme.colors.accent],
+  });
 
   return (
     <View style={styles.container}>
@@ -176,9 +194,9 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
       <View style={styles.statusContainer}>
         {isListening ? (
           <View style={styles.statusRow}>
-            <View style={[styles.recordingDot, { backgroundColor: isSpeaking ? theme.colors.accent : theme.colors.primary }]} />
+            <Animated.View style={[styles.recordingDot, { backgroundColor: dotColor }]} />
             <Text style={[styles.statusText, { color: theme.colors.text }]}>
-              {isSpeaking ? speakingLabel : listeningLabel}
+              Tap to stop
             </Text>
           </View>
         ) : (

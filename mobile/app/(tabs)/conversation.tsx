@@ -23,6 +23,7 @@ import { ConversationBubble } from '../../src/components/ConversationBubble';
 import { translationService, RealtimeTranslationResult } from '../../src/services/translationService';
 import { audioService, AudioSegment } from '../../src/services/audioService';
 import { getLanguageByCode } from '../../src/constants/languages';
+import { useDebouncedSpeaking } from '../../src/hooks/useDebouncedSpeaking';
 
 export default function ConversationScreen() {
   const colorScheme = useColorScheme();
@@ -164,7 +165,7 @@ export default function ConversationScreen() {
     setActiveSpeaker(speaker);
     setConnectionError(null);
 
-    // Connect WebSocket
+    // Disconnect existing WebSocket if any
     if (translationService.isConnected()) {
       translationService.disconnect();
       setIsConnected(false);
@@ -174,21 +175,37 @@ export default function ConversationScreen() {
     const sourceLang = speaker === 'A' ? personALang : personBLang;
     const targetLang = speaker === 'A' ? personBLang : personALang;
 
-    translationService.connectRealtimeWebSocket(
-      handleWebSocketMessage,
-      (error) => {
-        console.error('Conversation WS error:', error);
-        setConnectionError('Connection failed. Try again.');
-        setIsConnected(false);
-        setIsListening(false);
-        setActiveSpeaker(null);
-      },
-      () => {
-        setIsConnected(true);
-        translationService.startRealtimeSession(sourceLang, targetLang);
-      }
-    );
+    // Await WebSocket connection before starting audio
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Connection timeout'));
+        }, 5000);
 
+        translationService.connectRealtimeWebSocket(
+          handleWebSocketMessage,
+          (error) => {
+            clearTimeout(timeout);
+            console.error('Conversation WS error:', error);
+            reject(error);
+          },
+          () => {
+            clearTimeout(timeout);
+            setIsConnected(true);
+            translationService.startRealtimeSession(sourceLang, targetLang);
+            resolve();
+          }
+        );
+      });
+    } catch (error) {
+      setConnectionError('Connection failed. Try again.');
+      setIsConnected(false);
+      setIsListening(false);
+      setActiveSpeaker(null);
+      return;
+    }
+
+    // Only start audio AFTER WebSocket is confirmed connected
     const success = await audioService.startRealtimeMode(
       handleSegmentReady,
       handleMeteringUpdate
@@ -266,10 +283,12 @@ export default function ConversationScreen() {
     });
   };
 
+  // Debounce the speaking state to prevent rapid label flickering
+  const displaySpeaking = useDebouncedSpeaking(isSpeaking, isListening, 500);
+
   const SpeakButton = ({ person, isTop }: { person: 'A' | 'B'; isTop: boolean }) => {
     const isActive = isListening && activeSpeaker === person;
     const isOtherActive = isListening && activeSpeaker !== person;
-    const langInfo = person === 'A' ? personAInfo : personBInfo;
     const accentColor = person === 'A' ? theme.colors.accent : theme.colors.secondary;
 
     return (
@@ -290,7 +309,7 @@ export default function ConversationScreen() {
         />
         <Text style={styles.speakButtonText}>
           {isActive
-            ? (isSpeaking ? 'Recording...' : 'Listening... Tap to stop')
+            ? 'Tap to stop'
             : `Tap to speak - Person ${person}`}
         </Text>
       </TouchableOpacity>
@@ -333,17 +352,6 @@ export default function ConversationScreen() {
       {/* Person A Section (Top - rotated 180deg for face-to-face) */}
       <View style={[styles.personSection, styles.personASection]}>
         <View style={styles.rotatedContent}>
-          {/* Language selector */}
-          <View style={styles.personHeader}>
-            <View style={[styles.personBadge, { backgroundColor: theme.colors.accent + '15' }]}>
-              <Text style={styles.personFlag}>{personAInfo?.flag || '🌐'}</Text>
-              <Text style={[styles.personLabel, { color: theme.colors.accent }]}>Person A</Text>
-            </View>
-            <View style={styles.langSelectSmall}>
-              <LanguageSelector value={personALang} onChange={setPersonALang} excludeAuto />
-            </View>
-          </View>
-
           {/* Conversation bubbles (Person A's view) */}
           <ScrollView
             ref={scrollRefA}
@@ -368,13 +376,46 @@ export default function ConversationScreen() {
         </View>
       </View>
 
-      {/* Divider */}
-      <View style={styles.divider}>
-        <View style={[styles.dividerLine, { backgroundColor: theme.colors.border }]} />
-        <View style={[styles.dividerBadge, { backgroundColor: theme.colors.card }]}>
-          <Ionicons name="swap-vertical" size={18} color={theme.colors.textTertiary} />
+      {/* Language Bar - Center (NOT rotated, both selectors accessible) */}
+      <View style={[styles.languageBar, { backgroundColor: theme.colors.card }]}>
+        <View style={styles.langBarSide}>
+          <View style={[styles.personBadge, { backgroundColor: theme.colors.accent + '15' }]}>
+            <Text style={styles.personFlag}>{personAInfo?.flag || '🌐'}</Text>
+            <Text style={[styles.personLabel, { color: theme.colors.accent }]}>A</Text>
+          </View>
+          <View style={styles.langSelectCompact}>
+            <LanguageSelector value={personALang} onChange={setPersonALang} excludeAuto />
+          </View>
         </View>
-        <View style={[styles.dividerLine, { backgroundColor: theme.colors.border }]} />
+
+        <TouchableOpacity
+          onPress={() => {
+            handleHaptic();
+            const tempLang = personALang;
+            setPersonALang(personBLang);
+            setPersonBLang(tempLang);
+          }}
+          style={styles.swapButton}
+        >
+          <LinearGradient
+            colors={[theme.colors.secondary, theme.colors.accent] as [string, string]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.swapButtonGradient}
+          >
+            <Ionicons name="swap-horizontal" size={16} color="#FFF" />
+          </LinearGradient>
+        </TouchableOpacity>
+
+        <View style={styles.langBarSide}>
+          <View style={styles.langSelectCompact}>
+            <LanguageSelector value={personBLang} onChange={setPersonBLang} excludeAuto />
+          </View>
+          <View style={[styles.personBadge, { backgroundColor: theme.colors.secondary + '15' }]}>
+            <Text style={styles.personFlag}>{personBInfo?.flag || '🌐'}</Text>
+            <Text style={[styles.personLabel, { color: theme.colors.secondary }]}>B</Text>
+          </View>
+        </View>
       </View>
 
       {/* Person B Section (Bottom - normal orientation) */}
@@ -400,17 +441,6 @@ export default function ConversationScreen() {
             renderBubblesForPerson('B')
           )}
         </ScrollView>
-
-        {/* Language selector */}
-        <View style={styles.personHeader}>
-          <View style={[styles.personBadge, { backgroundColor: theme.colors.secondary + '15' }]}>
-            <Text style={styles.personFlag}>{personBInfo?.flag || '🌐'}</Text>
-            <Text style={[styles.personLabel, { color: theme.colors.secondary }]}>Person B</Text>
-          </View>
-          <View style={styles.langSelectSmall}>
-            <LanguageSelector value={personBLang} onChange={setPersonBLang} excludeAuto />
-          </View>
-        </View>
       </View>
 
       {/* Connection Error */}
@@ -489,29 +519,49 @@ const styles = StyleSheet.create({
   rotatedContent: {
     flex: 1,
   },
-  personHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-  },
   personBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    gap: 4,
   },
   personFlag: {
-    fontSize: 16,
+    fontSize: 14,
   },
   personLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
-  langSelectSmall: {
-    maxWidth: 160,
+  languageBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
+    marginVertical: 4,
+  },
+  langBarSide: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  langSelectCompact: {
+    flex: 1,
+  },
+  swapButton: {
+    marginHorizontal: 8,
+  },
+  swapButtonGradient: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   bubblesContainer: {
     flex: 1,
@@ -548,29 +598,6 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: '600',
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    marginVertical: 4,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-  },
-  dividerBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
   },
   errorBanner: {
     flexDirection: 'row',

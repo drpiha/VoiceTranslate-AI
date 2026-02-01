@@ -578,18 +578,74 @@ RULES:
   }
 
   /**
-   * DeepL translation (placeholder).
+   * DeepL translation using the DeepL API.
    */
   private async deeplTranslate(request: TranslationRequest): Promise<TranslationResponse> {
-    logger.warn('DeepL translation not fully implemented, using mock');
+    const apiKey = env.DEEPL_API_KEY;
+    if (!apiKey) {
+      logger.warn('No DeepL API key configured, falling back to OpenRouter');
+      if (this.useOpenRouter) {
+        return this.openRouterTranslate(request);
+      }
+      return this.mockTranslate(request);
+    }
 
-    logger.debug('Would send to DeepL', {
-      text: request.text.substring(0, 100),
-      sourceLang: request.sourceLang,
-      targetLang: request.targetLang,
-    });
+    const baseUrl = apiKey.endsWith(':fx')
+      ? 'https://api-free.deepl.com/v2/translate'
+      : 'https://api.deepl.com/v2/translate';
 
-    return this.mockTranslate(request);
+    const deeplLangMap: Record<string, string> = {
+      'en': 'EN', 'de': 'DE', 'fr': 'FR', 'es': 'ES', 'it': 'IT',
+      'nl': 'NL', 'pl': 'PL', 'pt': 'PT-BR', 'ru': 'RU', 'ja': 'JA',
+      'zh': 'ZH', 'ko': 'KO', 'tr': 'TR', 'ar': 'AR', 'cs': 'CS',
+      'da': 'DA', 'el': 'EL', 'fi': 'FI', 'hu': 'HU', 'id': 'ID',
+      'sv': 'SV', 'uk': 'UK',
+    };
+
+    const targetLang = deeplLangMap[request.targetLang.toLowerCase()] || request.targetLang.toUpperCase();
+
+    try {
+      const params = new URLSearchParams();
+      params.append('text', request.text);
+      params.append('target_lang', targetLang);
+      if (request.sourceLang !== 'auto') {
+        const sourceLang = deeplLangMap[request.sourceLang.toLowerCase()] || request.sourceLang.toUpperCase();
+        params.append('source_lang', sourceLang);
+      }
+
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `DeepL-Auth-Key ${apiKey}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params.toString(),
+      });
+
+      if (!response.ok) {
+        throw new Error(`DeepL API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const translation = data.translations?.[0];
+
+      return {
+        translatedText: translation?.text || '',
+        detectedSourceLang: translation?.detected_source_language?.toLowerCase() || request.sourceLang,
+        targetLang: request.targetLang,
+        confidence: 0.98,
+        characterCount: request.text.length,
+        provider: 'deepl',
+      };
+    } catch (error: any) {
+      logger.error('DeepL translation failed', { error: error.message });
+      // Fallback to OpenRouter if available
+      if (this.useOpenRouter) {
+        logger.info('Falling back to OpenRouter translation');
+        return this.openRouterTranslate(request);
+      }
+      return this.mockTranslate(request);
+    }
   }
 
   /**

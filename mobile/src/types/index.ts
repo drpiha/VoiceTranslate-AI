@@ -22,6 +22,7 @@ export interface User {
 }
 
 export type VadSensitivity = 'low' | 'medium' | 'high';
+export type TranslationProvider = 'backend' | 'deepl';
 
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
@@ -31,6 +32,8 @@ export interface AppSettings {
   saveHistory: boolean;
   hapticFeedback: boolean;
   vadSensitivity: VadSensitivity;
+  translationProvider: TranslationProvider;
+  deeplApiKey: string;
 }
 
 export interface SubscriptionPlan {

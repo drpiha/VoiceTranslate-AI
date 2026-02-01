@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   useColorScheme,
   Image,
   Platform,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -30,15 +31,20 @@ export default function SettingsScreen() {
     autoPlayTranslation,
     saveHistory,
     hapticFeedback,
+    translationProvider,
+    deeplApiKey,
     setTheme,
     setAutoPlayTranslation,
     setSaveHistory,
     setHapticFeedback,
+    setTranslationProvider,
+    setDeeplApiKey,
   } = useSettingsStore();
   const { user, logout } = useUserStore();
   const { clearHistory } = useHistoryStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
   const theme = createTheme(isDark);
+  const [showDeeplKey, setShowDeeplKey] = useState(false);
 
   const handleLogout = () => {
     Alert.alert('Logout', 'Are you sure?', [
@@ -55,10 +61,14 @@ export default function SettingsScreen() {
   };
 
   const handleClearHistory = () => {
-    Alert.alert('Clear History', 'Delete all translations?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear', style: 'destructive', onPress: () => clearHistory() },
-    ]);
+    Alert.alert(
+      'Clear History',
+      'This will delete all translations except your favorites. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Clear', style: 'destructive', onPress: () => clearHistory() },
+      ]
+    );
   };
 
   const cycleTheme = async () => {
@@ -237,7 +247,9 @@ export default function SettingsScreen() {
                 <View style={[styles.iconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.15)' }]}>
                   <Ionicons name={getThemeIcon()} size={20} color={theme.colors.primary} />
                 </View>
-                <Text style={[styles.rowText, { color: theme.colors.text }]}>Theme</Text>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Theme</Text>
+                </View>
                 <View style={styles.rowValue}>
                   <Text style={[styles.valueText, { color: theme.colors.textSecondary }]}>
                     {themePreference.charAt(0).toUpperCase() + themePreference.slice(1)}
@@ -261,7 +273,12 @@ export default function SettingsScreen() {
                 <View style={[styles.iconContainer, { backgroundColor: 'rgba(34, 197, 94, 0.15)' }]}>
                   <Ionicons name="volume-high" size={20} color="#22C55E" />
                 </View>
-                <Text style={[styles.rowText, { color: theme.colors.text }]}>Auto-play Translation</Text>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Auto-play Translation</Text>
+                  <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                    Automatically speak translated text aloud using text-to-speech
+                  </Text>
+                </View>
                 <Switch
                   value={autoPlayTranslation}
                   onValueChange={setAutoPlayTranslation}
@@ -273,7 +290,12 @@ export default function SettingsScreen() {
                 <View style={[styles.iconContainer, { backgroundColor: 'rgba(236, 72, 153, 0.15)' }]}>
                   <Ionicons name="time" size={20} color="#EC4899" />
                 </View>
-                <Text style={[styles.rowText, { color: theme.colors.text }]}>Save History</Text>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Save History</Text>
+                  <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                    Save all translations for later reference
+                  </Text>
+                </View>
                 <Switch
                   value={saveHistory}
                   onValueChange={setSaveHistory}
@@ -285,7 +307,12 @@ export default function SettingsScreen() {
                 <View style={[styles.iconContainer, { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
                   <Ionicons name="phone-portrait" size={20} color="#F59E0B" />
                 </View>
-                <Text style={[styles.rowText, { color: theme.colors.text }]}>Haptic Feedback</Text>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Haptic Feedback</Text>
+                  <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                    Vibrate on button presses and completed translations
+                  </Text>
+                </View>
                 <Switch
                   value={hapticFeedback}
                   onValueChange={setHapticFeedback}
@@ -293,6 +320,90 @@ export default function SettingsScreen() {
                   thumbColor="#FFFFFF"
                 />
               </View>
+            </View>
+          </Animated.View>
+
+          {/* Translation Provider Section */}
+          <Animated.View entering={FadeInDown.delay(350).springify()}>
+            <View style={[
+              styles.section,
+              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
+            ]}>
+              <Text style={[styles.sectionTitle, { color: theme.colors.textTertiary }]}>
+                TRANSLATION PROVIDER
+              </Text>
+              <TouchableOpacity
+                style={[styles.row, styles.rowBorder, { borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}
+                onPress={() => setTranslationProvider('backend')}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.iconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.15)' }]}>
+                  <Ionicons name="cloud" size={20} color={theme.colors.primary} />
+                </View>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Backend AI</Text>
+                  <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                    Groq + OpenRouter (default, free)
+                  </Text>
+                </View>
+                <Ionicons
+                  name={translationProvider === 'backend' ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={22}
+                  color={translationProvider === 'backend' ? theme.colors.primary : theme.colors.textTertiary}
+                />
+              </TouchableOpacity>
+              <View style={styles.row}>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 }}
+                  onPress={() => setTranslationProvider('deepl')}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.iconContainer, { backgroundColor: 'rgba(6, 182, 212, 0.15)' }]}>
+                    <Ionicons name="language" size={20} color="#06B6D4" />
+                  </View>
+                  <View style={styles.rowTextContainer}>
+                    <Text style={[styles.rowText, { color: theme.colors.text }]}>DeepL</Text>
+                    <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                      High quality translation (requires API key)
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <Ionicons
+                  name={translationProvider === 'deepl' ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={22}
+                  color={translationProvider === 'deepl' ? '#06B6D4' : theme.colors.textTertiary}
+                />
+              </View>
+              {translationProvider === 'deepl' && (
+                <View style={[styles.apiKeyContainer, { borderTopColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
+                  <Text style={[styles.apiKeyLabel, { color: theme.colors.textSecondary }]}>DeepL API Key</Text>
+                  <View style={styles.apiKeyInputRow}>
+                    <TextInput
+                      style={[styles.apiKeyInput, {
+                        color: theme.colors.text,
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                      }]}
+                      placeholder="Enter your DeepL API key..."
+                      placeholderTextColor={theme.colors.textTertiary}
+                      value={deeplApiKey}
+                      onChangeText={setDeeplApiKey}
+                      secureTextEntry={!showDeeplKey}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    <TouchableOpacity onPress={() => setShowDeeplKey(!showDeeplKey)} style={styles.eyeButton}>
+                      <Ionicons
+                        name={showDeeplKey ? 'eye-off' : 'eye'}
+                        size={20}
+                        color={theme.colors.textTertiary}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={[styles.apiKeyHint, { color: theme.colors.textTertiary }]}>
+                    Get a free key at deepl.com/pro-api
+                  </Text>
+                </View>
+              )}
             </View>
           </Animated.View>
 
@@ -307,7 +418,12 @@ export default function SettingsScreen() {
                 <View style={[styles.iconContainer, { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
                   <Ionicons name="trash-outline" size={20} color="#EF4444" />
                 </View>
-                <Text style={[styles.rowText, { color: theme.colors.text }]}>Clear History</Text>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Clear History</Text>
+                  <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                    Favorites will be preserved
+                  </Text>
+                </View>
                 <Ionicons name="chevron-forward" size={18} color={theme.colors.textTertiary} />
               </TouchableOpacity>
             </View>
@@ -324,7 +440,9 @@ export default function SettingsScreen() {
                 <View style={[styles.iconContainer, { backgroundColor: 'rgba(6, 182, 212, 0.15)' }]}>
                   <Ionicons name="information-circle" size={20} color="#06B6D4" />
                 </View>
-                <Text style={[styles.rowText, { color: theme.colors.text }]}>Version</Text>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Version</Text>
+                </View>
                 <Text style={[styles.valueText, { color: theme.colors.textSecondary }]}>1.0.0</Text>
               </View>
             </View>
@@ -543,10 +661,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowText: {
+  rowTextContainer: {
     flex: 1,
+  },
+  rowText: {
     fontSize: 16,
     fontWeight: '500',
+  },
+  rowSubtext: {
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 16,
   },
   rowValue: {
     flexDirection: 'row',
@@ -587,6 +712,35 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  apiKeyContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+  },
+  apiKeyLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  apiKeyInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  apiKeyInput: {
+    flex: 1,
+    fontSize: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  eyeButton: {
+    padding: 8,
+    marginLeft: 4,
+  },
+  apiKeyHint: {
+    fontSize: 11,
+    marginTop: 6,
   },
   footer: {
     textAlign: 'center',

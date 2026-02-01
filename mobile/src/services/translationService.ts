@@ -69,11 +69,80 @@ class TranslationService {
   private useBackend: boolean = true;
   private backendFailCount: number = 0;
   private lastBackendCheck: number = 0;
-  private readonly RETRY_INTERVAL_MS = 10000; // Her 10 saniyede backend'i tekrar dene
+  private readonly RETRY_INTERVAL_MS = 10000;
   private readonly MAX_FAIL_COUNT = 3;
 
+  // DeepL language code mapping (some differ from ISO 639-1)
+  private mapToDeepLLang(code: string): string {
+    const map: Record<string, string> = {
+      'en': 'EN', 'de': 'DE', 'fr': 'FR', 'es': 'ES', 'it': 'IT',
+      'nl': 'NL', 'pl': 'PL', 'pt': 'PT-BR', 'ru': 'RU', 'ja': 'JA',
+      'zh': 'ZH', 'ko': 'KO', 'tr': 'TR', 'ar': 'AR', 'cs': 'CS',
+      'da': 'DA', 'el': 'EL', 'fi': 'FI', 'hu': 'HU', 'id': 'ID',
+      'lt': 'LT', 'lv': 'LV', 'nb': 'NB', 'ro': 'RO', 'sk': 'SK',
+      'sl': 'SL', 'sv': 'SV', 'uk': 'UK',
+    };
+    return map[code.toLowerCase()] || code.toUpperCase();
+  }
+
+  async translateWithDeepL(
+    text: string,
+    sourceLanguage: string,
+    targetLanguage: string,
+    apiKey: string
+  ): Promise<TranslationResponse> {
+    const baseUrl = apiKey.endsWith(':fx')
+      ? 'https://api-free.deepl.com/v2/translate'
+      : 'https://api.deepl.com/v2/translate';
+
+    const params = new URLSearchParams();
+    params.append('text', text);
+    params.append('target_lang', this.mapToDeepLLang(targetLanguage));
+    if (sourceLanguage !== 'auto') {
+      params.append('source_lang', this.mapToDeepLLang(sourceLanguage));
+    }
+
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `DeepL-Auth-Key ${apiKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`DeepL API error: ${response.status} ${errorText}`);
+    }
+
+    const data = await response.json();
+    return {
+      sourceText: text,
+      translatedText: data.translations[0].text,
+      detectedLanguage: data.translations[0].detected_source_language?.toLowerCase(),
+      confidence: 0.98,
+    };
+  }
+
   async translate(text: string, sourceLanguage: string, targetLanguage: string): Promise<TranslationResponse> {
-    // Backend devre dışıysa belirli aralıklarla tekrar dene
+    // Check if DeepL is configured as the provider
+    try {
+      const { useSettingsStore } = require('../store/settingsStore');
+      const { translationProvider, deeplApiKey } = useSettingsStore.getState();
+      if (translationProvider === 'deepl' && deeplApiKey) {
+        try {
+          return await this.translateWithDeepL(text, sourceLanguage, targetLanguage, deeplApiKey);
+        } catch (error: any) {
+          console.log('DeepL translation failed:', error.message);
+          // Fall through to backend/mock
+        }
+      }
+    } catch (e) {
+      // Settings store not available, continue with backend
+    }
+
+    // Backend retry logic
     if (!this.useBackend) {
       const now = Date.now();
       if (now - this.lastBackendCheck > this.RETRY_INTERVAL_MS) {
@@ -84,7 +153,7 @@ class TranslationService {
       }
     }
 
-    // Önce backend'i dene
+    // Try backend
     if (this.useBackend) {
       try {
         const response = await apiClient.post<{ success: boolean; data: any }>('/translate/text', {
@@ -94,7 +163,6 @@ class TranslationService {
         });
 
         const data = response.data || response;
-        // Başarılı - fail count sıfırla
         this.backendFailCount = 0;
         return {
           sourceText: text,
@@ -107,7 +175,6 @@ class TranslationService {
         this.backendFailCount++;
         this.lastBackendCheck = Date.now();
 
-        // Belirli sayıda hatadan sonra geçici olarak mock'a geç
         if (this.backendFailCount >= this.MAX_FAIL_COUNT) {
           console.log('Too many failures, temporarily switching to mock mode');
           this.useBackend = false;
@@ -115,7 +182,7 @@ class TranslationService {
       }
     }
 
-    // Mock çeviri kullan
+    // Mock translation fallback
     const translatedText = mockTranslate(text, targetLanguage);
     return {
       sourceText: text,

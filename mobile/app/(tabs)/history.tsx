@@ -10,7 +10,14 @@ import {
   Alert,
   useColorScheme,
   Platform,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,6 +46,12 @@ export default function HistoryScreen() {
 
   const [activeFilter, setActiveFilter] = useState<'all' | 'favorites'>('all');
   const [refreshing, setRefreshing] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const toggleExpanded = (id: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpandedId(expandedId === id ? null : id);
+  };
 
   useEffect(() => {
     loadHistory();
@@ -84,18 +97,22 @@ export default function HistoryScreen() {
     const sourceLang = getLanguageByCode(item.sourceLanguage);
     const targetLang = getLanguageByCode(item.targetLanguage);
     const date = new Date(item.timestamp).toLocaleDateString();
+    const isExpanded = expandedId === item.id;
 
     return (
       <Animated.View
-        entering={FadeInDown.delay(index * 50).springify()}
+        entering={FadeInDown.delay(Math.min(index * 50, 300)).springify()}
       >
         <TouchableOpacity
+          onPress={() => toggleExpanded(item.id)}
           onLongPress={() => handleLongPress(item)}
           style={[
             styles.card,
             {
               backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)',
-              borderColor: isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.1)',
+              borderColor: isExpanded
+                ? (isDark ? 'rgba(99, 102, 241, 0.4)' : 'rgba(99, 102, 241, 0.3)')
+                : (isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.1)'),
             }
           ]}
           activeOpacity={0.7}
@@ -127,14 +144,31 @@ export default function HistoryScreen() {
           <View style={styles.textSection}>
             <View style={[styles.textBlock, { borderLeftColor: theme.colors.primary }]}>
               <Text style={[styles.textLabel, { color: theme.colors.textTertiary }]}>Original</Text>
-              <Text style={[styles.textContent, { color: theme.colors.text }]} numberOfLines={2}>{item.sourceText}</Text>
+              <Text
+                style={[styles.textContent, { color: theme.colors.text }]}
+                numberOfLines={isExpanded ? undefined : 2}
+              >
+                {item.sourceText}
+              </Text>
             </View>
 
             <View style={[styles.textBlock, { borderLeftColor: '#EC4899' }]}>
               <Text style={[styles.textLabel, { color: theme.colors.textTertiary }]}>Translation</Text>
-              <Text style={[styles.textContent, { color: theme.colors.text }]} numberOfLines={2}>{item.translatedText}</Text>
+              <Text
+                style={[styles.textContent, { color: theme.colors.text }]}
+                numberOfLines={isExpanded ? undefined : 2}
+              >
+                {item.translatedText}
+              </Text>
             </View>
           </View>
+
+          {!isExpanded && (item.sourceText.length > 80 || item.translatedText.length > 80) && (
+            <View style={styles.expandHint}>
+              <Ionicons name="chevron-down" size={14} color={theme.colors.textTertiary} />
+              <Text style={[styles.expandHintText, { color: theme.colors.textTertiary }]}>Tap to see full text</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </Animated.View>
     );
@@ -474,6 +508,17 @@ const styles = StyleSheet.create({
   textContent: {
     fontSize: 15,
     lineHeight: 22,
+  },
+  expandHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    gap: 4,
+  },
+  expandHintText: {
+    fontSize: 11,
+    fontWeight: '500',
   },
   emptyContainer: {
     alignItems: 'center',
