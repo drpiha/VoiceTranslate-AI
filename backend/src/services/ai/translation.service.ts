@@ -626,7 +626,7 @@ RULES:
         throw new Error(`DeepL API error: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as { translations?: Array<{ text: string; detected_source_language?: string }> };
       const translation = data.translations?.[0];
 
       return {
