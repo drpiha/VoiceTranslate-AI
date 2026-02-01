@@ -1,17 +1,20 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppSettings } from '../types';
+import { AppSettings, VadSensitivity } from '../types';
 import { useColorScheme } from 'react-native';
 
 interface SettingsState extends AppSettings {
   isLoading: boolean;
-  
+  recentLanguages: string[];
+
   setTheme: (theme: 'light' | 'dark' | 'system') => Promise<void>;
   setSourceLanguage: (language: string) => Promise<void>;
   setTargetLanguage: (language: string) => Promise<void>;
   setAutoPlayTranslation: (enabled: boolean) => Promise<void>;
   setSaveHistory: (enabled: boolean) => Promise<void>;
   setHapticFeedback: (enabled: boolean) => Promise<void>;
+  setVadSensitivity: (sensitivity: VadSensitivity) => Promise<void>;
+  addRecentLanguage: (language: string) => Promise<void>;
   loadSettings: () => Promise<void>;
   getEffectiveTheme: () => 'light' | 'dark';
 }
@@ -23,12 +26,14 @@ const defaultSettings: AppSettings = {
   autoPlayTranslation: true,
   saveHistory: true,
   hapticFeedback: true,
+  vadSensitivity: 'medium',
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   ...defaultSettings,
   isLoading: true,
-  
+  recentLanguages: [],
+
   setTheme: async (theme) => {
     try {
       await AsyncStorage.setItem('theme', theme);
@@ -37,22 +42,40 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       console.error('Set theme error:', error);
     }
   },
-  
+
   setSourceLanguage: async (language) => {
     try {
       await AsyncStorage.setItem('sourceLanguage', language);
       set({ sourceLanguage: language });
+      // Track recent languages
+      if (language !== 'auto') {
+        get().addRecentLanguage(language);
+      }
     } catch (error) {
       console.error('Set source language error:', error);
     }
   },
-  
+
   setTargetLanguage: async (language) => {
     try {
       await AsyncStorage.setItem('targetLanguage', language);
       set({ targetLanguage: language });
+      // Track recent languages
+      get().addRecentLanguage(language);
     } catch (error) {
       console.error('Set target language error:', error);
+    }
+  },
+
+  addRecentLanguage: async (language) => {
+    try {
+      const { recentLanguages } = get();
+      // Add to front, remove duplicates, keep max 5
+      const updated = [language, ...recentLanguages.filter(l => l !== language)].slice(0, 5);
+      await AsyncStorage.setItem('recentLanguages', JSON.stringify(updated));
+      set({ recentLanguages: updated });
+    } catch (error) {
+      console.error('Add recent language error:', error);
     }
   },
   
@@ -82,7 +105,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       console.error('Set haptic feedback error:', error);
     }
   },
-  
+
+  setVadSensitivity: async (sensitivity) => {
+    try {
+      await AsyncStorage.setItem('vadSensitivity', sensitivity);
+      set({ vadSensitivity: sensitivity });
+    } catch (error) {
+      console.error('Set VAD sensitivity error:', error);
+    }
+  },
+
   loadSettings: async () => {
     try {
       const settings = await AsyncStorage.multiGet([
@@ -92,21 +124,23 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         'autoPlayTranslation',
         'saveHistory',
         'hapticFeedback',
+        'vadSensitivity',
+        'recentLanguages',
       ]);
-      
-      const loadedSettings: Partial<AppSettings> = {};
-      
+
+      const loadedSettings: Partial<AppSettings> & { recentLanguages?: string[] } = {};
+
       settings.forEach(([key, value]) => {
         if (value) {
-          if (key === 'autoPlayTranslation' || key === 'saveHistory' || key === 'hapticFeedback') {
-            loadedSettings[key] = JSON.parse(value);
+          if (key === 'autoPlayTranslation' || key === 'saveHistory' || key === 'hapticFeedback' || key === 'recentLanguages') {
+            (loadedSettings as Record<string, unknown>)[key] = JSON.parse(value);
           } else {
             (loadedSettings as Record<string, unknown>)[key] = value;
           }
         }
       });
-      
-      set({ ...defaultSettings, ...loadedSettings, isLoading: false });
+
+      set({ ...defaultSettings, recentLanguages: [], ...loadedSettings, isLoading: false });
     } catch (error) {
       console.error('Load settings error:', error);
       set({ isLoading: false });

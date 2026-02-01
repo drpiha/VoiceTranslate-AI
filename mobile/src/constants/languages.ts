@@ -5,13 +5,20 @@ export interface Language {
   flag: string;
 }
 
+// Priority languages (shown first)
+export const PRIORITY_LANGUAGES = ['en', 'de', 'tr'];
+
 // Comprehensive language list - Whisper large-v3 supports 99 languages
 export const LANGUAGES: Language[] = [
   // Auto detect
   { code: 'auto', name: 'Auto Detect', nativeName: 'Auto Detect', flag: '🌐' },
 
-  // Major World Languages
+  // Priority Languages (English, German, Turkish)
   { code: 'en', name: 'English', nativeName: 'English', flag: '🇺🇸' },
+  { code: 'de', name: 'German', nativeName: 'Deutsch', flag: '🇩🇪' },
+  { code: 'tr', name: 'Turkish', nativeName: 'Türkçe', flag: '🇹🇷' },
+
+  // Major World Languages
   { code: 'zh', name: 'Chinese', nativeName: '中文', flag: '🇨🇳' },
   { code: 'es', name: 'Spanish', nativeName: 'Español', flag: '🇪🇸' },
   { code: 'ar', name: 'Arabic', nativeName: 'العربية', flag: '🇸🇦' },
@@ -20,7 +27,6 @@ export const LANGUAGES: Language[] = [
   { code: 'pt', name: 'Portuguese', nativeName: 'Português', flag: '🇵🇹' },
   { code: 'ru', name: 'Russian', nativeName: 'Русский', flag: '🇷🇺' },
   { code: 'ja', name: 'Japanese', nativeName: '日本語', flag: '🇯🇵' },
-  { code: 'de', name: 'German', nativeName: 'Deutsch', flag: '🇩🇪' },
 
   // European Languages
   { code: 'fr', name: 'French', nativeName: 'Français', flag: '🇫🇷' },
@@ -57,7 +63,6 @@ export const LANGUAGES: Language[] = [
   { code: 'bs', name: 'Bosnian', nativeName: 'Bosanski', flag: '🇧🇦' },
 
   // Middle Eastern & Central Asian
-  { code: 'tr', name: 'Turkish', nativeName: 'Türkçe', flag: '🇹🇷' },
   { code: 'fa', name: 'Persian', nativeName: 'فارسی', flag: '🇮🇷' },
   { code: 'he', name: 'Hebrew', nativeName: 'עברית', flag: '🇮🇱' },
   { code: 'ur', name: 'Urdu', nativeName: 'اردو', flag: '🇵🇰' },

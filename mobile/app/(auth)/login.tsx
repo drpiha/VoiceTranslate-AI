@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -37,6 +37,7 @@ export default function LoginScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [authProcessing, setAuthProcessing] = useState(false);
+  const authProcessingRef = useRef(false); // Ref for immediate synchronous checking
   const colorScheme = useColorScheme();
   const { theme: themePreference } = useSettingsStore();
   const { login, setUser } = useUserStore();
@@ -154,30 +155,40 @@ export default function LoginScreen() {
       console.error('Google auth error:', response.error);
       Alert.alert('Error', 'Google Sign-In failed. Please try again.');
       setIsGoogleLoading(false);
+      authProcessingRef.current = false;
+      setAuthProcessing(false);
     } else if (response?.type === 'dismiss') {
       console.log('Google auth dismissed by user');
       setIsGoogleLoading(false);
+      authProcessingRef.current = false;
+      setAuthProcessing(false);
     } else if (response) {
       console.log('Google auth response type:', response.type);
       setIsGoogleLoading(false);
+      authProcessingRef.current = false;
+      setAuthProcessing(false);
     }
   }, [response]);
 
   const handleGoogleResponse = async (authentication: any) => {
-    // Prevent duplicate processing
-    if (authProcessing) {
-      console.log('Auth already processing, skipping...');
-      return;
-    }
-
     console.log('handleGoogleResponse called with:', authentication);
 
     if (!authentication) {
       console.error('No authentication object received');
       setIsGoogleLoading(false);
+      setAuthProcessing(false);
+      authProcessingRef.current = false;
       return;
     }
 
+    // Prevent duplicate processing using ref for immediate synchronous check
+    if (authProcessingRef.current) {
+      console.log('Auth already processing (ref check), skipping...');
+      return;
+    }
+
+    // Set ref immediately (synchronous) and state (async)
+    authProcessingRef.current = true;
     setAuthProcessing(true);
 
     try {
@@ -209,6 +220,7 @@ export default function LoginScreen() {
       if (!error.message?.includes('already in progress')) {
         Alert.alert('Error', error.message || 'Failed to complete Google Sign-In');
       }
+      authProcessingRef.current = false;
       setAuthProcessing(false);
     } finally {
       setIsGoogleLoading(false);

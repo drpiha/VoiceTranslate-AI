@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, FlatList, TextInput } from 'react-native';
 import { useColorScheme } from 'react-native';
 import { createTheme } from '../constants/theme';
 import { useSettingsStore } from '../store/settingsStore';
-import { LANGUAGES, Language } from '../constants/languages';
+import { LANGUAGES, Language, PRIORITY_LANGUAGES } from '../constants/languages';
 import * as Haptics from 'expo-haptics';
 
 interface LanguageSelectorProps {
@@ -24,15 +24,38 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   const [isVisible, setIsVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback } = useSettingsStore();
+  const { theme: themePreference, hapticFeedback, recentLanguages } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
   const theme = createTheme(isDark);
 
   const languages = excludeAuto ? LANGUAGES.filter(l => l.code !== 'auto') : LANGUAGES;
-  
+
   const selectedLanguage = languages.find(l => l.code === value);
 
-  const filteredLanguages = languages.filter(lang =>
+  // Sort languages: recent first, then priority (en, de, tr), then alphabetical
+  const sortedLanguages = useMemo(() => {
+    return [...languages].sort((a, b) => {
+      const aRecent = recentLanguages.indexOf(a.code);
+      const bRecent = recentLanguages.indexOf(b.code);
+      const aPriority = PRIORITY_LANGUAGES.indexOf(a.code);
+      const bPriority = PRIORITY_LANGUAGES.indexOf(b.code);
+
+      // Recent languages first
+      if (aRecent !== -1 && bRecent === -1) return -1;
+      if (aRecent === -1 && bRecent !== -1) return 1;
+      if (aRecent !== -1 && bRecent !== -1) return aRecent - bRecent;
+
+      // Priority languages next
+      if (aPriority !== -1 && bPriority === -1) return -1;
+      if (aPriority === -1 && bPriority !== -1) return 1;
+      if (aPriority !== -1 && bPriority !== -1) return aPriority - bPriority;
+
+      // Alphabetical by name
+      return a.name.localeCompare(b.name);
+    });
+  }, [languages, recentLanguages]);
+
+  const filteredLanguages = sortedLanguages.filter(lang =>
     lang.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     lang.nativeName.toLowerCase().includes(searchQuery.toLowerCase())
   );

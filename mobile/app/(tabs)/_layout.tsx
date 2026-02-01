@@ -70,7 +70,6 @@ function TabIcon({ name, color, focused, size = 24 }: TabIconProps) {
 }
 
 function TabBarBackground({ isDark }: { isDark: boolean }) {
-  // Use BlurView on iOS if available, otherwise fall back to gradient
   if (Platform.OS === 'ios' && BlurView) {
     return (
       <BlurView
@@ -90,7 +89,6 @@ function TabBarBackground({ isDark }: { isDark: boolean }) {
     );
   }
 
-  // Android and iOS fallback (when BlurView not available)
   return (
     <LinearGradient
       colors={
@@ -124,17 +122,16 @@ export default function TabsLayout() {
           height: Platform.OS === 'ios' ? 88 : 70,
           paddingBottom: Platform.OS === 'ios' ? 28 : 10,
           paddingTop: 10,
-          // Shadow for iOS
           shadowColor: isDark ? '#6366F1' : '#000',
           shadowOffset: { width: 0, height: -4 },
           shadowOpacity: isDark ? 0.3 : 0.1,
           shadowRadius: 12,
         },
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: '600',
           letterSpacing: 0.3,
-          marginTop: 4,
+          marginTop: 2,
         },
         tabBarItemStyle: {
           paddingVertical: 4,
@@ -143,15 +140,6 @@ export default function TabsLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{
-          title: 'Translate',
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon name="language" color={color} focused={focused} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="realtime"
         options={{
           title: 'Live',
           tabBarIcon: ({ color, focused }) => (
@@ -163,6 +151,33 @@ export default function TabsLayout() {
             />
           ),
           tabBarActiveTintColor: '#EC4899',
+        }}
+      />
+      <Tabs.Screen
+        name="conversation"
+        options={{
+          title: 'Converse',
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon
+              name={focused ? 'people' : 'people-outline'}
+              color={focused ? '#06B6D4' : color}
+              focused={focused}
+            />
+          ),
+          tabBarActiveTintColor: '#06B6D4',
+        }}
+      />
+      <Tabs.Screen
+        name="text"
+        options={{
+          title: 'Text',
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon
+              name={focused ? 'language' : 'language-outline'}
+              color={color}
+              focused={focused}
+            />
+          ),
         }}
       />
       <Tabs.Screen

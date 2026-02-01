@@ -3,553 +3,491 @@ import {
   View,
   Text,
   StyleSheet,
-  TextInput,
   TouchableOpacity,
-  ScrollView,
   useColorScheme,
   Alert,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Animated as RNAnimated,
+  Animated,
+  Easing,
 } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-
-// Conditionally import BlurView only on iOS
-let BlurView: any = null;
-if (Platform.OS === 'ios') {
-  try {
-    BlurView = require('expo-blur').BlurView;
-  } catch (e) {
-    // BlurView not available
-  }
-}
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withRepeat,
-  withSequence,
-  withTiming,
-} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
-import { useTranslationStore } from '../../src/store/translationStore';
-import { useHistoryStore } from '../../src/store/historyStore';
 import { useUserStore } from '../../src/store/userStore';
+import { useHistoryStore } from '../../src/store/historyStore';
 import { LanguageSelector } from '../../src/components/LanguageSelector';
-import { translationService } from '../../src/services/translationService';
-import { audioService } from '../../src/services/audioService';
+import { FloatingMicButton } from '../../src/components/FloatingMicButton';
+import { TranscriptPanel, FinalizedSentence, CurrentSegment } from '../../src/components/TranscriptPanel';
+import { translationService, RealtimeTranslationResult } from '../../src/services/translationService';
+import { audioService, AudioSegment } from '../../src/services/audioService';
 import { getLanguageByCode } from '../../src/constants/languages';
 
-const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
-const AnimatedLinearGradient = Animated.createAnimatedComponent(LinearGradient);
+interface TranslationSegment {
+  id: number;
+  transcript: string;
+  translation: string;
+  detectedLanguage?: string;
+  timestamp: Date;
+  isFinal: boolean;
+}
 
-export default function TranslateScreen() {
+export default function LiveScreen() {
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback, saveHistory } = useSettingsStore();
+  const { theme: themePreference, hapticFeedback } = useSettingsStore();
   const { user } = useUserStore();
-  const [isDemoMode, setIsDemoMode] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const [isBackendConnected, setIsBackendConnected] = useState(true);
-  const recordingTimer = useRef<NodeJS.Timeout | null>(null);
-  const pulseAnim = useRef(new RNAnimated.Value(1)).current;
-  const {
-    sourceLanguage,
-    targetLanguage,
-    sourceText,
-    translatedText,
-    isProcessing,
-    setSourceLanguage,
-    setTargetLanguage,
-    setSourceText,
-    setTranslatedText,
-    swapLanguages,
-    setProcessing,
-    setError,
-  } = useTranslationStore();
   const { addTranslation } = useHistoryStore();
+
+  const [isConnected, setIsConnected] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [sourceLanguage, setSourceLanguage] = useState('auto');
+  const [targetLanguage, setTargetLanguage] = useState('en');
+  const [segments, setSegments] = useState<TranslationSegment[]>([]);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [detectedLang, setDetectedLang] = useState<string | null>(null);
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('online');
+  const [isRetranslating, setIsRetranslating] = useState(false);
+
+  // Finalized sentences that won't change
+  const [finalizedSentences, setFinalizedSentences] = useState<FinalizedSentence[]>([]);
+  // Current sentence being processed
+  const [currentSegment, setCurrentSegment] = useState<CurrentSegment | null>(null);
+
+  // Panel expansion states
+  const [sourcePanelExpanded, setSourcePanelExpanded] = useState(false);
+  const [targetPanelExpanded, setTargetPanelExpanded] = useState(false);
+
+  // Auto-reconnect state
+  const reconnectAttempts = useRef(0);
+  const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
+  const maxReconnectAttempts = 5;
 
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
   const theme = createTheme(isDark);
 
-  // Animation values
-  const swapRotation = useSharedValue(0);
-  const translateButtonScale = useSharedValue(1);
-
-  // Recording animation
-  useEffect(() => {
-    if (isRecording) {
-      const pulse = RNAnimated.loop(
-        RNAnimated.sequence([
-          RNAnimated.timing(pulseAnim, { toValue: 1.2, duration: 500, useNativeDriver: true }),
-          RNAnimated.timing(pulseAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
-        ])
-      );
-      pulse.start();
-      return () => pulse.stop();
-    } else {
-      pulseAnim.setValue(1);
-    }
-  }, [isRecording]);
-
-  // Backend connection check
-  useEffect(() => {
-    setIsBackendConnected(translationService.isUsingBackend());
-  }, [isDemoMode]);
-
   const handleHaptic = useCallback(() => {
     if (hapticFeedback) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
   }, [hapticFeedback]);
 
-  const handleStartRecording = async () => {
-    try {
-      handleHaptic();
-      await audioService.startRecording();
-      setIsRecording(true);
-      setRecordingDuration(0);
+  // Handle WebSocket messages with sentence-level updates
+  const handleWebSocketMessage = useCallback((data: RealtimeTranslationResult) => {
+    if (data.type === 'realtime_ready') {
+      setIsProcessing(false);
+      reconnectAttempts.current = 0;
+    } else if (data.type === 'segment_result') {
+      setIsProcessing(false);
 
-      recordingTimer.current = setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
-      }, 1000);
-    } catch (error: any) {
-      console.error('Recording start error:', error);
-      Alert.alert('Microphone Error', error.message || 'Could not start recording. Please check microphone permissions.');
-    }
-  };
-
-  const handleStopRecording = async () => {
-    try {
-      handleHaptic();
-
-      if (recordingTimer.current) {
-        clearInterval(recordingTimer.current);
-        recordingTimer.current = null;
+      if (data.isEmpty || (!data.transcript && !data.translation)) {
+        return;
       }
 
-      const audioUri = await audioService.stopRecording();
-      setIsRecording(false);
-      setRecordingDuration(0);
-
-      if (audioUri) {
-        if (!translationService.isUsingBackend()) {
-          Alert.alert(
-            'Offline',
-            'Speech-to-text requires backend connection. Please type your text manually.',
-            [{ text: 'OK' }]
-          );
-        } else {
-          // Send audio to backend for STT
-          setProcessing(true);
-          try {
-            const result = await translationService.transcribeAudio(audioUri, sourceLanguage);
-            if (result.transcript && result.transcript.trim()) {
-              setSourceText(result.transcript);
-              // Auto-detect language if source is set to auto
-              if (result.detectedLanguage && sourceLanguage === 'auto') {
-                console.log('Detected language:', result.detectedLanguage);
-              }
-            } else {
-              Alert.alert('No Speech', 'No speech was detected. Please try again.');
-            }
-          } catch (error: any) {
-            console.error('STT error:', error);
-            Alert.alert('Error', error.message || 'Speech-to-text failed. Please try again.');
-          } finally {
-            setProcessing(false);
-          }
-        }
+      if (data.detectedLanguage) {
+        setDetectedLang(data.detectedLanguage);
       }
-    } catch (error: any) {
-      console.error('Recording stop error:', error);
-      setIsRecording(false);
-      Alert.alert('Error', 'Failed to stop recording');
-    }
-  };
 
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+      const segmentId = data.segmentId || Date.now();
+      const isFinal = data.isFinal ?? false;
 
-  const handleTranslate = async () => {
-    if (!sourceText.trim()) {
-      Alert.alert('Error', 'Please enter text to translate');
-      return;
-    }
+      if (isFinal) {
+        const newFinalizedSentence: FinalizedSentence = {
+          id: segmentId,
+          transcript: data.transcript || currentSegment?.transcript || '',
+          translation: data.translation || currentSegment?.translation || '',
+          timestamp: new Date(),
+        };
 
-    handleHaptic();
-    translateButtonScale.value = withSequence(
-      withSpring(0.95),
-      withSpring(1)
-    );
-    setProcessing(true);
-    setError(null);
-
-    try {
-      const result = await translationService.translate(
-        sourceText,
-        sourceLanguage,
-        targetLanguage
-      );
-
-      setTranslatedText(result.translatedText);
-      setIsDemoMode(!translationService.isUsingBackend());
-
-      if (saveHistory) {
-        await addTranslation({
-          sourceLanguage,
-          targetLanguage,
-          sourceText,
-          translatedText: result.translatedText,
-          isFavorite: false,
+        setFinalizedSentences(prev => {
+          if (prev.some(s => s.id === segmentId)) return prev;
+          return [...prev, newFinalizedSentence];
+        });
+        setCurrentSegment(null);
+        handleHaptic();
+      } else {
+        setCurrentSegment({
+          id: segmentId,
+          transcript: data.transcript || '',
+          translation: data.translation || '',
+          isFinal: false,
         });
       }
-    } catch (error: any) {
-      console.error('Translation error:', error);
-      setIsDemoMode(true);
-      Alert.alert('Error', 'Failed to translate. Please try again.');
-      setError(error.message || 'Translation failed');
-    } finally {
-      setProcessing(false);
+
+      // Legacy segments for compatibility
+      setSegments(prev => {
+        const existingIndex = prev.findIndex(s => s.id === segmentId);
+        if (existingIndex >= 0) {
+          const updated = [...prev];
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            transcript: data.transcript || updated[existingIndex].transcript,
+            translation: data.translation || updated[existingIndex].translation,
+            detectedLanguage: data.detectedLanguage,
+            timestamp: new Date(),
+            isFinal,
+          };
+          return updated;
+        } else {
+          return [...prev, {
+            id: segmentId,
+            transcript: data.transcript || '',
+            translation: data.translation || '',
+            detectedLanguage: data.detectedLanguage,
+            timestamp: new Date(),
+            isFinal,
+          }];
+        }
+      });
+    } else if (data.type === 'error') {
+      console.error('WebSocket error:', data.error);
+      setConnectionError(data.error || 'Unknown error');
+      setIsProcessing(false);
+    }
+  }, [handleHaptic, currentSegment]);
+
+  const handleSegmentReady = useCallback((segment: AudioSegment) => {
+    setIsProcessing(true);
+    translationService.sendAudioSegment(
+      segment.base64,
+      segment.segmentId,
+      sourceLanguage,
+      targetLanguage
+    );
+  }, [sourceLanguage, targetLanguage]);
+
+  const handleMeteringUpdate = useCallback((_level: number, speaking: boolean) => {
+    setIsSpeaking(speaking);
+  }, []);
+
+  const connectWebSocket = useCallback(() => {
+    setConnectionError(null);
+    setBackendStatus('checking');
+    translationService.connectRealtimeWebSocket(
+      handleWebSocketMessage,
+      (error) => {
+        console.error('WebSocket connection error:', error);
+        setIsConnected(false);
+        setBackendStatus('offline');
+
+        // Auto-reconnect with exponential backoff
+        if (isListening && reconnectAttempts.current < maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 16000);
+          reconnectAttempts.current += 1;
+          setConnectionError(`Connection lost. Reconnecting (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
+          reconnectTimer.current = setTimeout(() => {
+            connectWebSocket();
+          }, delay);
+        } else {
+          setConnectionError('Connection failed. Tap retry or try again.');
+          setIsListening(false);
+        }
+      },
+      () => {
+        setIsConnected(true);
+        setBackendStatus('online');
+        reconnectAttempts.current = 0;
+        translationService.startRealtimeSession(sourceLanguage, targetLanguage);
+      }
+    );
+  }, [sourceLanguage, targetLanguage, handleWebSocketMessage, isListening]);
+
+  const startListening = async () => {
+    handleHaptic();
+    setSegments([]);
+    setFinalizedSentences([]);
+    setCurrentSegment(null);
+    setDetectedLang(null);
+    setConnectionError(null);
+    reconnectAttempts.current = 0;
+
+    if (translationService.isConnected()) {
+      translationService.disconnect();
+      setIsConnected(false);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    connectWebSocket();
+
+    const success = await audioService.startRealtimeMode(
+      handleSegmentReady,
+      handleMeteringUpdate
+    );
+
+    if (success) {
+      setIsListening(true);
+    } else {
+      Alert.alert('Microphone Error', 'Could not start microphone. Please check permissions.');
     }
   };
 
+  const stopListening = () => {
+    handleHaptic();
+    audioService.stopRealtimeMode();
+    setIsListening(false);
+    setIsSpeaking(false);
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = null;
+    }
+  };
+
+  const toggleListening = () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
+
+  const clearSegments = async () => {
+    handleHaptic();
+
+    // Save to history if there's content
+    const currentTranscript = segments.map(s => s.transcript).filter(Boolean).join(' ').trim();
+    const currentTranslation = segments.map(s => s.translation).filter(Boolean).join(' ').trim();
+
+    if (currentTranscript || currentTranslation) {
+      const finalSourceLang = detectedLang || (sourceLanguage === 'auto' ? 'en' : sourceLanguage);
+      addTranslation({
+        sourceText: currentTranscript || '[Audio]',
+        translatedText: currentTranslation || '',
+        sourceLanguage: finalSourceLang,
+        targetLanguage: targetLanguage,
+        isFavorite: false,
+        mode: 'live',
+      });
+    }
+
+    if (isListening) {
+      audioService.stopRealtimeMode();
+      setIsListening(false);
+      setIsSpeaking(false);
+    }
+
+    audioService.resetSegmentCount();
+
+    if (translationService.isConnected()) {
+      translationService.disconnect();
+      setIsConnected(false);
+    }
+
+    setSegments([]);
+    setFinalizedSentences([]);
+    setCurrentSegment(null);
+    setDetectedLang(null);
+    setIsProcessing(false);
+    setConnectionError(null);
+  };
+
+  // Swap languages
   const handleSwapLanguages = () => {
-    if (sourceLanguage === 'auto') {
-      Alert.alert('Cannot Swap', 'Cannot swap when source language is set to Auto Detect');
+    handleHaptic();
+    if (sourceLanguage === 'auto' && !detectedLang) {
+      Alert.alert('Cannot Swap', 'Please select a specific source language or speak first to detect the language.');
       return;
     }
-    handleHaptic();
-    swapRotation.value = withSpring(swapRotation.value + 180);
-    swapLanguages();
+    const actualSourceLang = detectedLang || sourceLanguage;
+    setSourceLanguage(targetLanguage);
+    setTargetLanguage(actualSourceLang === 'auto' ? 'en' : actualSourceLang);
+    setDetectedLang(null);
   };
 
-  const handleCopyTranslation = async () => {
-    if (!translatedText) return;
-    handleHaptic();
-    await Clipboard.setStringAsync(translatedText);
-    Alert.alert('Copied', 'Translation copied to clipboard');
+  // Retranslate when target language changes
+  const handleTargetLanguageChange = (newLang: string) => {
+    setTargetLanguage(newLang);
+    const hasContent = finalizedSentences.length > 0 || (currentSegment?.transcript?.length ?? 0) > 0;
+    if (hasContent && !isListening) {
+      retranslateContent(newLang);
+    }
   };
 
-  const handleClearAll = () => {
-    handleHaptic();
-    setSourceText('');
-    setTranslatedText('');
+  const retranslateContent = async (newTargetLang: string) => {
+    const allTranscripts = [
+      ...finalizedSentences.map(s => s.transcript),
+      currentSegment?.transcript || '',
+    ].filter(Boolean).join(' ').trim();
+    if (!allTranscripts) return;
+
+    setIsRetranslating(true);
+    try {
+      const result = await translationService.translate(
+        allTranscripts,
+        detectedLang || sourceLanguage,
+        newTargetLang
+      );
+      // Update the last finalized sentence with the retranslation
+      if (finalizedSentences.length > 0) {
+        setFinalizedSentences(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            translation: result.translatedText,
+          };
+          return updated;
+        });
+      }
+    } catch (error) {
+      console.error('Retranslation failed:', error);
+    } finally {
+      setIsRetranslating(false);
+    }
   };
 
-  const swapAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${swapRotation.value}deg` }],
-  }));
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      audioService.stopRealtimeMode();
+      translationService.disconnect();
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current);
+      }
+    };
+  }, []);
 
-  const translateButtonAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: translateButtonScale.value }],
-  }));
-
-  const sourceLang = getLanguageByCode(sourceLanguage);
-  const targetLang = getLanguageByCode(targetLanguage);
-
-  // Define gradient colors
-  const bgGradientColors = isDark
-    ? ['#0F0F1A', '#1A1A2E', '#16162A'] as const
-    : ['#F8FAFC', '#EEF2FF', '#E0E7FF'] as const;
+  // Get language info
+  const sourceLangInfo = detectedLang ? getLanguageByCode(detectedLang) : getLanguageByCode(sourceLanguage);
+  const targetLangInfo = getLanguageByCode(targetLanguage);
+  const isCurrentlyUpdating = currentSegment !== null && !currentSegment.isFinal;
+  const hasContent = finalizedSentences.length > 0 || (currentSegment?.transcript?.length ?? 0) > 0;
 
   return (
-    <View style={styles.container}>
-      {/* Beautiful gradient background */}
-      <LinearGradient
-        colors={bgGradientColors}
-        style={StyleSheet.absoluteFill}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      />
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <LinearGradient
+            colors={[theme.colors.gradient1, theme.colors.gradient2] as [string, string]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.headerIconBg}
+          >
+            <Ionicons name="globe" size={20} color="#FFF" />
+          </LinearGradient>
+          <Text style={[styles.title, { color: theme.colors.text }]}>Live Translate</Text>
+        </View>
+        <View style={styles.headerRight}>
+          <View style={[
+            styles.statusBadge,
+            { backgroundColor: isConnected ? theme.colors.success :
+              backendStatus === 'checking' ? theme.colors.primary :
+              backendStatus === 'offline' ? theme.colors.error :
+              theme.colors.success }
+          ]}>
+            <View style={[
+              styles.statusDot,
+              { backgroundColor: isConnected ? theme.colors.successLight :
+                backendStatus === 'checking' ? theme.colors.primaryLight :
+                backendStatus === 'offline' ? '#FCA5A5' :
+                theme.colors.successLight }
+            ]} />
+            <Text style={styles.statusText}>
+              {isConnected ? 'Live' :
+               backendStatus === 'checking' ? 'Connecting...' :
+               backendStatus === 'offline' ? 'Offline' : 'Ready'}
+            </Text>
+          </View>
+        </View>
+      </View>
 
-      {/* Decorative gradient orbs */}
-      <View style={styles.orbContainer}>
-        <LinearGradient
-          colors={isDark
-            ? ['rgba(99, 102, 241, 0.15)', 'transparent']
-            : ['rgba(99, 102, 241, 0.1)', 'transparent']
-          }
-          style={[styles.orb, styles.orb1]}
+      {/* Language Selection */}
+      <View style={[styles.languageCard, { backgroundColor: theme.colors.card }]}>
+        <View style={styles.languageRow}>
+          <View style={styles.languageSelectorWrapper}>
+            <View style={styles.languageLabelRow}>
+              <Ionicons name="mic-outline" size={14} color={theme.colors.primary} />
+              <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>From</Text>
+            </View>
+            <LanguageSelector value={sourceLanguage} onChange={setSourceLanguage} />
+          </View>
+
+          <TouchableOpacity onPress={handleSwapLanguages} style={styles.arrowContainer}>
+            <LinearGradient
+              colors={[theme.colors.gradient1, theme.colors.gradient2] as [string, string]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.arrowBadge}
+            >
+              <Ionicons name="swap-horizontal" size={18} color="#FFF" />
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <View style={styles.languageSelectorWrapper}>
+            <View style={styles.languageLabelRow}>
+              <Ionicons name="volume-medium-outline" size={14} color={theme.colors.accent} />
+              <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>To</Text>
+            </View>
+            <LanguageSelector value={targetLanguage} onChange={handleTargetLanguageChange} excludeAuto />
+          </View>
+        </View>
+      </View>
+
+      {/* Two Panel Translation View */}
+      <View style={styles.translationPanels}>
+        <TranscriptPanel
+          theme={theme}
+          field="transcript"
+          languageCode={detectedLang || sourceLanguage}
+          languageName={detectedLang ? detectedLang.toUpperCase() : (sourceLangInfo?.name || 'Auto Detect')}
+          languageFlag={sourceLangInfo?.flag || '🌐'}
+          finalizedSentences={finalizedSentences}
+          currentSegment={currentSegment}
+          isExpanded={sourcePanelExpanded}
+          isOtherExpanded={targetPanelExpanded}
+          onToggleExpand={() => setSourcePanelExpanded(!sourcePanelExpanded)}
+          accentColor={theme.colors.primary}
+          isUpdating={isCurrentlyUpdating}
+          isListening={isListening}
+          isSpeaking={isSpeaking}
+          isProcessing={isProcessing}
+          onClear={clearSegments}
+          hasContent={hasContent}
+          emptyText="Spoken text will appear here"
+          processingText="Processing..."
+          showSentenceCount={true}
         />
-        <LinearGradient
-          colors={isDark
-            ? ['rgba(236, 72, 153, 0.12)', 'transparent']
-            : ['rgba(236, 72, 153, 0.08)', 'transparent']
-          }
-          style={[styles.orb, styles.orb2]}
+
+        <TranscriptPanel
+          theme={theme}
+          field="translation"
+          languageCode={targetLanguage}
+          languageName={targetLangInfo?.name || targetLanguage.toUpperCase()}
+          languageFlag={targetLangInfo?.flag || '🌐'}
+          finalizedSentences={finalizedSentences}
+          currentSegment={currentSegment}
+          isExpanded={targetPanelExpanded}
+          isOtherExpanded={sourcePanelExpanded}
+          onToggleExpand={() => setTargetPanelExpanded(!targetPanelExpanded)}
+          accentColor={theme.colors.accent}
+          isUpdating={isRetranslating}
+          isProcessing={isRetranslating}
+          emptyText={isRetranslating ? 'Translating...' : 'Translation will appear here'}
+          processingText="Translating..."
+          showSentenceCount={true}
         />
       </View>
 
-      <SafeAreaView style={styles.safeArea}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.keyboardView}
-        >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Header */}
-            <View style={styles.header}>
-              <View>
-                <Text style={[styles.title, { color: theme.colors.text }]}>Translate</Text>
-                <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
-                  Instant AI-powered translation
-                </Text>
-              </View>
-              <View style={styles.headerRight}>
-                {/* Connection Status */}
-                <View style={[
-                  styles.connectionBadge,
-                  { backgroundColor: isBackendConnected
-                    ? 'rgba(34, 197, 94, 0.2)'
-                    : 'rgba(239, 68, 68, 0.2)'
-                  }
-                ]}>
-                  <View style={[
-                    styles.connectionDot,
-                    { backgroundColor: isBackendConnected ? '#22C55E' : '#EF4444' }
-                  ]} />
-                  <Text style={[
-                    styles.connectionText,
-                    { color: isBackendConnected ? '#22C55E' : '#EF4444' }
-                  ]}>
-                    {isBackendConnected ? 'Online' : 'Offline'}
-                  </Text>
-                </View>
-              </View>
-            </View>
+      {/* Connection Error */}
+      {connectionError && (
+        <View style={[styles.errorBanner, { backgroundColor: theme.colors.error + '15' }]}>
+          <Ionicons name="warning" size={18} color={theme.colors.error} />
+          <Text style={[styles.errorText, { color: theme.colors.error }]}>{connectionError}</Text>
+          <TouchableOpacity onPress={connectWebSocket} style={[styles.retryButton, { backgroundColor: theme.colors.error }]}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-            {/* Language Selection Card */}
-            <View style={[
-              styles.languageContainer,
-              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.9)' }
-            ]}>
-              {Platform.OS === 'ios' && BlurView && (
-                <BlurView intensity={isDark ? 20 : 40} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-              )}
-              <View style={styles.languageContent}>
-                <View style={styles.languageRow}>
-                  <View style={styles.languageSelectorWrapper}>
-                    <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>
-                      FROM
-                    </Text>
-                    <LanguageSelector
-                      value={sourceLanguage}
-                      onChange={setSourceLanguage}
-                    />
-                  </View>
-
-                  <AnimatedTouchable
-                    onPress={handleSwapLanguages}
-                    disabled={sourceLanguage === 'auto'}
-                    style={[styles.swapButton]}
-                  >
-                    <LinearGradient
-                      colors={['#6366F1', '#8B5CF6']}
-                      style={styles.swapButtonGradient}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                    >
-                      <Animated.View style={swapAnimatedStyle}>
-                        <Ionicons name="swap-horizontal" size={22} color="#FFFFFF" />
-                      </Animated.View>
-                    </LinearGradient>
-                  </AnimatedTouchable>
-
-                  <View style={styles.languageSelectorWrapper}>
-                    <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>
-                      TO
-                    </Text>
-                    <LanguageSelector
-                      value={targetLanguage}
-                      onChange={setTargetLanguage}
-                      excludeAuto
-                    />
-                  </View>
-                </View>
-              </View>
-            </View>
-
-            {/* Source Text Input Card */}
-            <View style={[
-              styles.textCard,
-              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
-            ]}>
-              <View style={styles.cardHeader}>
-                <View style={styles.cardHeaderLeft}>
-                  <Text style={styles.flagEmoji}>{sourceLang?.flag || '🌐'}</Text>
-                  <Text style={[styles.languageName, { color: theme.colors.text }]}>
-                    {sourceLang?.name || 'Auto Detect'}
-                  </Text>
-                </View>
-                {sourceText.length > 0 && (
-                  <TouchableOpacity onPress={handleClearAll} style={styles.clearButton}>
-                    <Ionicons name="close-circle" size={22} color={theme.colors.textSecondary} />
-                  </TouchableOpacity>
-                )}
-              </View>
-              <TextInput
-                style={[styles.textInput, { color: theme.colors.text }]}
-                placeholder="Enter text to translate..."
-                placeholderTextColor={theme.colors.textTertiary}
-                value={sourceText}
-                onChangeText={setSourceText}
-                multiline
-                textAlignVertical="top"
-              />
-              <View style={styles.cardFooter}>
-                <Text style={[styles.charCount, { color: theme.colors.textTertiary }]}>
-                  {sourceText.length} / 5000
-                </Text>
-              </View>
-            </View>
-
-            {/* Action Buttons Row */}
-            <View style={styles.buttonRow}>
-              {/* Microphone Button */}
-              <TouchableOpacity
-                onPress={isRecording ? handleStopRecording : handleStartRecording}
-                disabled={isProcessing}
-                activeOpacity={0.8}
-              >
-                <RNAnimated.View
-                  style={[
-                    styles.micButton,
-                    {
-                      backgroundColor: isRecording
-                        ? '#EF4444'
-                        : isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.15)',
-                      transform: [{ scale: pulseAnim }],
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name={isRecording ? 'stop' : 'mic'}
-                    size={26}
-                    color={isRecording ? '#FFFFFF' : theme.colors.primary}
-                  />
-                  {isRecording && (
-                    <Text style={styles.recordingTime}>
-                      {formatDuration(recordingDuration)}
-                    </Text>
-                  )}
-                </RNAnimated.View>
-              </TouchableOpacity>
-
-              {/* Translate Button */}
-              <AnimatedTouchable
-                onPress={handleTranslate}
-                disabled={isProcessing || !sourceText.trim()}
-                style={[styles.translateButtonWrapper, translateButtonAnimatedStyle]}
-                activeOpacity={0.9}
-              >
-                <LinearGradient
-                  colors={
-                    (!sourceText.trim() || isProcessing)
-                      ? ['#94A3B8', '#64748B']
-                      : ['#6366F1', '#EC4899']
-                  }
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.translateButton}
-                >
-                  {isProcessing ? (
-                    <ActivityIndicator color="#FFFFFF" size="small" />
-                  ) : (
-                    <>
-                      <Ionicons name="language" size={22} color="#FFFFFF" />
-                      <Text style={styles.translateButtonText}>Translate</Text>
-                    </>
-                  )}
-                </LinearGradient>
-              </AnimatedTouchable>
-            </View>
-
-            {/* Translation Result Card */}
-            {translatedText.length > 0 && (
-              <View style={[
-                styles.textCard,
-                styles.resultCard,
-                {
-                  backgroundColor: isDark ? 'rgba(26, 26, 46, 0.9)' : 'rgba(255, 255, 255, 0.98)',
-                  borderColor: isDark ? 'rgba(99, 102, 241, 0.4)' : 'rgba(99, 102, 241, 0.3)',
-                }
-              ]}>
-                <LinearGradient
-                  colors={isDark
-                    ? ['rgba(99, 102, 241, 0.1)', 'transparent']
-                    : ['rgba(99, 102, 241, 0.05)', 'transparent']
-                  }
-                  style={styles.resultGradient}
-                />
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    <Text style={styles.flagEmoji}>{targetLang?.flag || '🌐'}</Text>
-                    <Text style={[styles.languageName, { color: theme.colors.text }]}>
-                      {targetLang?.name || 'Unknown'}
-                    </Text>
-                  </View>
-                  <TouchableOpacity onPress={handleCopyTranslation} style={styles.copyButton}>
-                    <Ionicons name="copy-outline" size={22} color={theme.colors.primary} />
-                  </TouchableOpacity>
-                </View>
-                <Text style={[styles.translatedText, { color: theme.colors.text }]}>
-                  {translatedText}
-                </Text>
-              </View>
-            )}
-
-            {/* Quick Tips */}
-            {!sourceText && !translatedText && (
-              <View style={[
-                styles.tipsContainer,
-                { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.6)' : 'rgba(255, 255, 255, 0.8)' }
-              ]}>
-                <View style={styles.tipsHeader}>
-                  <Ionicons name="bulb" size={22} color="#F59E0B" />
-                  <Text style={[styles.tipsTitle, { color: theme.colors.text }]}>Quick Tips</Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.1)' }]}>
-                    <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
-                  </View>
-                  <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
-                    Type or paste text above to translate instantly
-                  </Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(236, 72, 153, 0.1)' }]}>
-                    <Ionicons name="swap-horizontal" size={18} color="#EC4899" />
-                  </View>
-                  <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
-                    Tap the swap button to switch languages
-                  </Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(34, 197, 94, 0.1)' }]}>
-                    <Ionicons name="mic" size={18} color="#22C55E" />
-                  </View>
-                  <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
-                    Use voice input for hands-free translation
-                  </Text>
-                </View>
-              </View>
-            )}
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </View>
+      {/* Mic Button */}
+      <FloatingMicButton
+        isListening={isListening}
+        isSpeaking={isSpeaking}
+        onPress={toggleListening}
+        theme={theme}
+      />
+    </SafeAreaView>
   );
 }
 
@@ -557,80 +495,57 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  safeArea: {
-    flex: 1,
-  },
-  orbContainer: {
-    ...StyleSheet.absoluteFillObject,
-    overflow: 'hidden',
-  },
-  orb: {
-    position: 'absolute',
-    borderRadius: 999,
-  },
-  orb1: {
-    width: 300,
-    height: 300,
-    top: -100,
-    right: -100,
-  },
-  orb2: {
-    width: 250,
-    height: 250,
-    bottom: 100,
-    left: -80,
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 120,
-  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 24,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerIconBg: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
   },
   title: {
-    fontSize: 32,
-    fontWeight: '800',
+    fontSize: 20,
+    fontWeight: '700',
     letterSpacing: -0.5,
   },
-  subtitle: {
-    fontSize: 14,
-    marginTop: 4,
-  },
-  connectionBadge: {
+  statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
-    gap: 6,
+    paddingVertical: 5,
+    borderRadius: 16,
+    gap: 5,
   },
-  connectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
-  connectionText: {
-    fontSize: 12,
+  statusText: {
+    fontSize: 11,
     fontWeight: '600',
+    color: '#FFFFFF',
   },
-  languageContainer: {
-    borderRadius: 20,
-    marginBottom: 16,
-    overflow: 'hidden',
-  },
-  languageContent: {
-    padding: 16,
+  languageCard: {
+    marginHorizontal: 16,
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 12,
   },
   languageRow: {
     flexDirection: 'row',
@@ -640,167 +555,56 @@ const styles = StyleSheet.create({
   languageSelectorWrapper: {
     flex: 1,
   },
+  languageLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 6,
+  },
   languageLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 8,
-    letterSpacing: 1,
-  },
-  swapButton: {
-    marginHorizontal: 12,
-    marginTop: 20,
-  },
-  swapButtonGradient: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  textCard: {
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 16,
-    minHeight: 160,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  resultCard: {
-    borderWidth: 1.5,
-    overflow: 'hidden',
-  },
-  resultGradient: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 80,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  cardHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  flagEmoji: {
-    fontSize: 24,
-    marginRight: 10,
-  },
-  languageName: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  clearButton: {
-    padding: 4,
-  },
-  textInput: {
-    fontSize: 16,
-    lineHeight: 24,
-    minHeight: 100,
-  },
-  cardFooter: {
-    marginTop: 8,
-  },
-  charCount: {
-    fontSize: 12,
-    textAlign: 'right',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    marginBottom: 20,
-  },
-  micButton: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  recordingTime: {
     fontSize: 10,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginTop: 2,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  translateButtonWrapper: {
-    flex: 1,
+  arrowContainer: {
+    paddingHorizontal: 12,
   },
-  translateButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 18,
+  arrowBadge: {
+    width: 32,
+    height: 32,
     borderRadius: 16,
-    gap: 10,
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  translateButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
-  translatedText: {
-    fontSize: 16,
-    lineHeight: 26,
-  },
-  copyButton: {
-    padding: 8,
-    borderRadius: 8,
-  },
-  tipsContainer: {
-    borderRadius: 20,
-    padding: 20,
-  },
-  tipsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 18,
-  },
-  tipsTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  tipItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  tipIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
   },
-  tipText: {
-    fontSize: 14,
+  translationPanels: {
     flex: 1,
-    lineHeight: 20,
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginBottom: 8,
+    gap: 8,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  retryButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  retryText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

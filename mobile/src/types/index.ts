@@ -1,3 +1,5 @@
+export type TranslationMode = 'text' | 'live' | 'conversation';
+
 export interface Translation {
   id: string;
   sourceLanguage: string;
@@ -7,6 +9,7 @@ export interface Translation {
   timestamp: number;
   isFavorite: boolean;
   audioUrl?: string;
+  mode?: TranslationMode;
 }
 
 export interface User {
@@ -18,6 +21,8 @@ export interface User {
   subscriptionExpiresAt?: number;
 }
 
+export type VadSensitivity = 'low' | 'medium' | 'high';
+
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   sourceLanguage: string;
@@ -25,6 +30,7 @@ export interface AppSettings {
   autoPlayTranslation: boolean;
   saveHistory: boolean;
   hapticFeedback: boolean;
+  vadSensitivity: VadSensitivity;
 }
 
 export interface SubscriptionPlan {
