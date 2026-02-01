@@ -1,6 +1,8 @@
 import { TranslationResponse } from '../types';
-import { apiClient, tokenStorage } from './api';
+import { apiClient, tokenStorage, API_BASE_URL } from './api';
 import { getWebSocketBaseUrl } from '../config/api.config';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
 
 const WS_BASE_URL = getWebSocketBaseUrl();
 
@@ -180,6 +182,71 @@ class TranslationService {
       { code: 'ar', name: 'Arabic' },
       { code: 'tr', name: 'Turkish' },
     ];
+  }
+
+  // Speech-to-text: send recorded audio to backend STT endpoint
+  async transcribeAudio(audioUri: string, languageCode: string = 'auto'): Promise<{ transcript: string; detectedLanguage?: string; confidence?: number }> {
+    if (!this.useBackend) {
+      throw new Error('Backend not available');
+    }
+
+    try {
+      const accessToken = await tokenStorage.getValidAccessToken();
+
+      // Build form data with audio file
+      const formData = new FormData();
+
+      if (Platform.OS === 'web') {
+        // Web: fetch the blob and append
+        const response = await fetch(audioUri);
+        const blob = await response.blob();
+        formData.append('file', blob, 'audio.webm');
+      } else {
+        // Native: append file URI directly
+        const fileInfo = await FileSystem.getInfoAsync(audioUri);
+        if (!fileInfo.exists) {
+          throw new Error('Audio file not found');
+        }
+        formData.append('file', {
+          uri: audioUri,
+          type: audioUri.endsWith('.m4a') ? 'audio/m4a' : 'audio/mp4',
+          name: 'audio.m4a',
+        } as any);
+      }
+
+      const response = await fetch(
+        `${API_BASE_URL}/translate/stt?language=${encodeURIComponent(languageCode)}`,
+        {
+          method: 'POST',
+          headers: {
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `STT failed: ${response.status}`);
+      }
+
+      const result = await response.json();
+      const data = result.data || result;
+
+      this.backendFailCount = 0;
+      return {
+        transcript: data.transcript || '',
+        detectedLanguage: data.detectedLanguage,
+        confidence: data.confidence,
+      };
+    } catch (error: any) {
+      console.error('STT error:', error.message);
+      this.backendFailCount++;
+      if (this.backendFailCount >= this.MAX_FAIL_COUNT) {
+        this.useBackend = false;
+      }
+      throw error;
+    }
   }
 
   // Backend bağlantısını yeniden dene

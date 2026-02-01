@@ -139,11 +139,33 @@ export default function TranslateScreen() {
       setRecordingDuration(0);
 
       if (audioUri) {
-        Alert.alert(
-          'Voice Recording',
-          'Voice recording captured! Speech-to-text is currently in demo mode. The backend STT service needs to be configured for full functionality.\n\nFor now, please type your text manually.',
-          [{ text: 'OK' }]
-        );
+        if (!translationService.isUsingBackend()) {
+          Alert.alert(
+            'Offline',
+            'Speech-to-text requires backend connection. Please type your text manually.',
+            [{ text: 'OK' }]
+          );
+        } else {
+          // Send audio to backend for STT
+          setProcessing(true);
+          try {
+            const result = await translationService.transcribeAudio(audioUri, sourceLanguage);
+            if (result.transcript && result.transcript.trim()) {
+              setSourceText(result.transcript);
+              // Auto-detect language if source is set to auto
+              if (result.detectedLanguage && sourceLanguage === 'auto') {
+                console.log('Detected language:', result.detectedLanguage);
+              }
+            } else {
+              Alert.alert('No Speech', 'No speech was detected. Please try again.');
+            }
+          } catch (error: any) {
+            console.error('STT error:', error);
+            Alert.alert('Error', error.message || 'Speech-to-text failed. Please try again.');
+          } finally {
+            setProcessing(false);
+          }
+        }
       }
     } catch (error: any) {
       console.error('Recording stop error:', error);

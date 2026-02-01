@@ -7,6 +7,7 @@
  */
 
 import Fastify, { FastifyInstance, FastifyError, FastifyRequest, FastifyReply } from 'fastify';
+import multipart from '@fastify/multipart';
 import { env, isDevelopment } from './config/env.js';
 import { createLogger } from './utils/logger.js';
 import { isAppError, toAppError } from './utils/errors.js';
@@ -94,6 +95,13 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Rate limiting
   await registerRateLimitPlugin(app);
+
+  // Multipart file uploads (for STT audio)
+  await app.register(multipart, {
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB max audio file
+    },
+  });
 
   // Authentication
   await registerAuthPlugin(app);
