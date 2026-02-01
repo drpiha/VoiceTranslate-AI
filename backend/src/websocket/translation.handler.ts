@@ -727,7 +727,7 @@ async function handleProcessSegment(
   data: unknown
 ): Promise<void> {
   const startTime = Date.now();
-  const segmentData = data as { audio: string; segmentId?: number; sourceLang?: string; targetLang?: string };
+  const segmentData = data as { audio: string; segmentId?: number; sourceLang?: string; targetLang?: string; encoding?: string };
 
   if (!segmentData?.audio) {
     sendError(ws, 'INVALID_SEGMENT', 'Audio data is required');
@@ -776,10 +776,13 @@ async function handleProcessSegment(
       ? session.contextBuffer.slice(-3).join(' ')  // Use last 3 segments as context
       : undefined;
 
+    // Determine audio encoding (client sends M4A from mobile, WEBM_OPUS from web)
+    const audioEncoding = (segmentData.encoding || 'M4A') as 'MP3' | 'M4A' | 'WAV' | 'WEBM_OPUS';
+
     // Immediately transcribe using Whisper with context for better accuracy
     const sttResult = await sttService.transcribe({
       audioData: segmentData.audio,
-      encoding: 'WEBM_OPUS',
+      encoding: audioEncoding,
       sampleRateHertz: 48000, // Match the client sample rate
       languageCode: sourceLang,
       enableAutomaticPunctuation: true,

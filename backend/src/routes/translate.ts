@@ -27,6 +27,7 @@ const translateTextSchema = z.object({
   sourceLang: z.string().default('auto'),
   targetLang: languageCodeSchema,
   saveHistory: z.boolean().default(true),
+  provider: z.enum(['backend', 'deepl']).optional(),
 });
 
 const detectLanguageSchema = z.object({
@@ -49,6 +50,7 @@ interface TranslateTextBody {
   sourceLang: string;
   targetLang: string;
   saveHistory: boolean;
+  provider?: 'backend' | 'deepl';
 }
 
 interface DetectLanguageBody {
@@ -88,7 +90,7 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
       ],
     },
     async (request: FastifyRequest<{ Body: TranslateTextBody }>, reply: FastifyReply) => {
-      const { text, sourceLang, targetLang, saveHistory } = request.body;
+      const { text, sourceLang, targetLang, saveHistory, provider } = request.body;
       const user = request.authUser;
 
       // Guest users: use a default guest ID and free subscription
@@ -112,6 +114,7 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
         sourceLang,
         targetLang,
         saveHistory: shouldSaveHistory,
+        provider,
       });
 
       return reply.send({

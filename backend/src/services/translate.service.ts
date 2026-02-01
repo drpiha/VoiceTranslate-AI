@@ -28,6 +28,7 @@ export interface TranslateTextInput {
   sourceLang: string;
   targetLang: string;
   saveHistory?: boolean;
+  provider?: 'backend' | 'deepl';
 }
 
 /**
@@ -113,7 +114,7 @@ export class TranslateService {
    * @returns Translation result
    */
   async translateText(input: TranslateTextInput): Promise<TranslateTextResult> {
-    const { userId, subscription, text, sourceLang, targetLang, saveHistory = true } = input;
+    const { userId, subscription, text, sourceLang, targetLang, saveHistory = true, provider } = input;
 
     // Validate input
     if (!text || text.trim().length === 0) {
@@ -127,11 +128,12 @@ export class TranslateService {
     // Check usage limits
     await this.checkUsageLimits(userId, subscription, text.length);
 
-    // Perform translation
+    // Perform translation (pass provider preference)
     const result = await aiTranslationService.translate({
       text,
       sourceLang,
       targetLang,
+      provider,
     });
 
     // Update usage

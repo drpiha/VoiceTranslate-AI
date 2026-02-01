@@ -65,6 +65,15 @@ export default function LiveScreen() {
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
   const maxReconnectAttempts = 5;
 
+  // Refs to avoid stale closures in callbacks passed to services
+  const sourceLanguageRef = useRef(sourceLanguage);
+  const targetLanguageRef = useRef(targetLanguage);
+  const currentSegmentRef = useRef(currentSegment);
+
+  useEffect(() => { sourceLanguageRef.current = sourceLanguage; }, [sourceLanguage]);
+  useEffect(() => { targetLanguageRef.current = targetLanguage; }, [targetLanguage]);
+  useEffect(() => { currentSegmentRef.current = currentSegment; }, [currentSegment]);
+
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
   const theme = createTheme(isDark);
 
@@ -94,10 +103,11 @@ export default function LiveScreen() {
       const isFinal = data.isFinal ?? false;
 
       if (isFinal) {
+        const curSeg = currentSegmentRef.current;
         const newFinalizedSentence: FinalizedSentence = {
           id: segmentId,
-          transcript: data.transcript || currentSegment?.transcript || '',
-          translation: data.translation || currentSegment?.translation || '',
+          transcript: data.transcript || curSeg?.transcript || '',
+          translation: data.translation || curSeg?.translation || '',
           timestamp: new Date(),
         };
 
@@ -146,17 +156,17 @@ export default function LiveScreen() {
       setConnectionError(data.error || 'Unknown error');
       setIsProcessing(false);
     }
-  }, [handleHaptic, currentSegment]);
+  }, [handleHaptic]);
 
   const handleSegmentReady = useCallback((segment: AudioSegment) => {
     setIsProcessing(true);
     translationService.sendAudioSegment(
       segment.base64,
       segment.segmentId,
-      sourceLanguage,
-      targetLanguage
+      sourceLanguageRef.current,
+      targetLanguageRef.current
     );
-  }, [sourceLanguage, targetLanguage]);
+  }, []);
 
   const handleMeteringUpdate = useCallback((_level: number, speaking: boolean) => {
     setIsSpeaking(speaking);

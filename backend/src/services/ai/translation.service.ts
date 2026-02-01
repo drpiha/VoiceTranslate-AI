@@ -29,6 +29,8 @@ export interface TranslationRequest {
   targetLang: string;
   /** Formality preference (DeepL only) */
   formality?: 'default' | 'more' | 'less';
+  /** Explicit provider override from client */
+  provider?: 'backend' | 'deepl';
 }
 
 /**
@@ -318,6 +320,11 @@ export class AITranslationService {
     }
 
     try {
+      // If client explicitly requested DeepL and we have a key, use it
+      if (request.provider === 'deepl' && this.preferDeepL) {
+        return await this.deeplTranslate(request);
+      }
+
       if (this.useMock) {
         return await this.mockTranslate(request);
       }

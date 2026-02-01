@@ -126,20 +126,25 @@ class TranslationService {
   }
 
   async translate(text: string, sourceLanguage: string, targetLanguage: string): Promise<TranslationResponse> {
-    // Check if DeepL is configured as the provider
+    // Determine provider preference from settings
+    let provider: 'backend' | 'deepl' | undefined;
+    let userDeeplKey: string | undefined;
     try {
       const { useSettingsStore } = require('../store/settingsStore');
       const { translationProvider, deeplApiKey } = useSettingsStore.getState();
-      if (translationProvider === 'deepl' && deeplApiKey) {
-        try {
-          return await this.translateWithDeepL(text, sourceLanguage, targetLanguage, deeplApiKey);
-        } catch (error: any) {
-          console.log('DeepL translation failed:', error.message);
-          // Fall through to backend/mock
-        }
-      }
+      provider = translationProvider;
+      userDeeplKey = deeplApiKey;
     } catch (e) {
-      // Settings store not available, continue with backend
+      // Settings store not available
+    }
+
+    // If user has their own DeepL API key, use it directly (client-side)
+    if (provider === 'deepl' && userDeeplKey) {
+      try {
+        return await this.translateWithDeepL(text, sourceLanguage, targetLanguage, userDeeplKey);
+      } catch (error: any) {
+        console.log('User DeepL key failed, falling back to backend:', error.message);
+      }
     }
 
     // Backend retry logic
@@ -153,13 +158,14 @@ class TranslationService {
       }
     }
 
-    // Try backend
+    // Try backend (pass provider preference so backend uses DeepL if requested)
     if (this.useBackend) {
       try {
         const response = await apiClient.post<{ success: boolean; data: any }>('/translate/text', {
           text,
           sourceLang: sourceLanguage === 'auto' ? 'auto' : sourceLanguage,
           targetLang: targetLanguage,
+          provider: provider || 'backend',
         });
 
         const data = response.data || response;
@@ -427,8 +433,11 @@ class TranslationService {
         segmentId: segmentId,
         sourceLang: sourceLang,
         targetLang: targetLang,
+        encoding: 'M4A',
       }));
       console.log('Sent audio segment:', segmentId, 'size:', audioBase64.length);
+    } else {
+      console.warn('WebSocket not open, dropping audio segment:', segmentId, 'readyState:', this.socket?.readyState);
     }
   }
 

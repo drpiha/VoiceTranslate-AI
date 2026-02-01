@@ -364,7 +364,7 @@ export default function SettingsScreen() {
                   <View style={styles.rowTextContainer}>
                     <Text style={[styles.rowText, { color: theme.colors.text }]}>DeepL</Text>
                     <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
-                      High quality translation (requires API key)
+                      High quality translation via server
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -376,14 +376,17 @@ export default function SettingsScreen() {
               </View>
               {translationProvider === 'deepl' && (
                 <View style={[styles.apiKeyContainer, { borderTopColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
-                  <Text style={[styles.apiKeyLabel, { color: theme.colors.textSecondary }]}>DeepL API Key</Text>
+                  <Text style={[styles.apiKeyHint, { color: theme.colors.textSecondary, marginBottom: 8 }]}>
+                    Uses our server's DeepL integration by default.
+                  </Text>
+                  <Text style={[styles.apiKeyLabel, { color: theme.colors.textTertiary }]}>Own API Key (optional)</Text>
                   <View style={styles.apiKeyInputRow}>
                     <TextInput
                       style={[styles.apiKeyInput, {
                         color: theme.colors.text,
                         backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
                       }]}
-                      placeholder="Enter your DeepL API key..."
+                      placeholder="Leave empty to use server key"
                       placeholderTextColor={theme.colors.textTertiary}
                       value={deeplApiKey}
                       onChangeText={setDeeplApiKey}
@@ -400,7 +403,7 @@ export default function SettingsScreen() {
                     </TouchableOpacity>
                   </View>
                   <Text style={[styles.apiKeyHint, { color: theme.colors.textTertiary }]}>
-                    Get a free key at deepl.com/pro-api
+                    Only needed if you want to use your own DeepL account
                   </Text>
                 </View>
               )}

@@ -57,6 +57,17 @@ export default function ConversationScreen() {
   const scrollRefB = useRef<ScrollView>(null);
   const segmentIdCounter = useRef(0);
 
+  // Refs to avoid stale closures in callbacks passed to services
+  const activeSpeakerRef = useRef(activeSpeaker);
+  const personALangRef = useRef(personALang);
+  const personBLangRef = useRef(personBLang);
+  const currentTurnRef = useRef(currentTurn);
+
+  useEffect(() => { activeSpeakerRef.current = activeSpeaker; }, [activeSpeaker]);
+  useEffect(() => { personALangRef.current = personALang; }, [personALang]);
+  useEffect(() => { personBLangRef.current = personBLang; }, [personBLang]);
+  useEffect(() => { currentTurnRef.current = currentTurn; }, [currentTurn]);
+
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
   const theme = createTheme(isDark);
 
@@ -82,9 +93,9 @@ export default function ConversationScreen() {
     }
   }, [hapticFeedback]);
 
-  // WebSocket message handler for conversation
+  // WebSocket message handler for conversation (uses refs to avoid stale closures)
   const handleWebSocketMessage = useCallback((data: RealtimeTranslationResult) => {
-    const speaker = activeSpeaker;
+    const speaker = activeSpeakerRef.current;
     if (!speaker) return;
 
     if (data.type === 'realtime_ready') {
@@ -95,16 +106,17 @@ export default function ConversationScreen() {
       if (data.isEmpty || (!data.transcript && !data.translation)) return;
 
       const turnId = `${speaker}-${data.segmentId || Date.now()}`;
-      const sourceLang = speaker === 'A' ? personALang : personBLang;
-      const targetLang = speaker === 'A' ? personBLang : personALang;
+      const sourceLang = speaker === 'A' ? personALangRef.current : personBLangRef.current;
+      const targetLang = speaker === 'A' ? personBLangRef.current : personALangRef.current;
       const isFinal = data.isFinal ?? false;
 
       if (isFinal) {
+        const curTurn = currentTurnRef.current;
         const finalTurn: ConversationTurn = {
           id: turnId,
           speaker,
-          originalText: data.transcript || currentTurn?.originalText || '',
-          translatedText: data.translation || currentTurn?.translatedText || '',
+          originalText: data.transcript || curTurn?.originalText || '',
+          translatedText: data.translation || curTurn?.translatedText || '',
           originalLang: sourceLang,
           translatedLang: targetLang,
           timestamp: new Date(),
@@ -139,20 +151,21 @@ export default function ConversationScreen() {
       setConnectionError(data.error || 'Unknown error');
       setIsProcessing(false);
     }
-  }, [activeSpeaker, personALang, personBLang, currentTurn, finalizeTurn, handleHaptic, addTranslation, setCurrentTurn, setIsProcessing]);
+  }, [finalizeTurn, handleHaptic, addTranslation, setCurrentTurn, setIsProcessing]);
 
   const handleSegmentReady = useCallback((segment: AudioSegment) => {
-    if (!activeSpeaker) return;
+    const speaker = activeSpeakerRef.current;
+    if (!speaker) return;
     setIsProcessing(true);
-    const sourceLang = activeSpeaker === 'A' ? personALang : personBLang;
-    const targetLang = activeSpeaker === 'A' ? personBLang : personALang;
+    const sourceLang = speaker === 'A' ? personALangRef.current : personBLangRef.current;
+    const targetLang = speaker === 'A' ? personBLangRef.current : personALangRef.current;
     translationService.sendAudioSegment(
       segment.base64,
       segment.segmentId,
       sourceLang,
       targetLang
     );
-  }, [activeSpeaker, personALang, personBLang, setIsProcessing]);
+  }, [setIsProcessing]);
 
   const handleMeteringUpdate = useCallback((_level: number, speaking: boolean) => {
     setIsSpeaking(speaking);
