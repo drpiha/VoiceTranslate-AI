@@ -10,24 +10,52 @@ import { Theme } from '../constants/theme';
 
 const RTL_LANGUAGES = ['ar', 'he', 'fa', 'ur'];
 
+// Animated typing dots for current segment
+const TypingDots = ({ color }: { color: string }) => {
+  const dot1 = useRef(new Animated.Value(0.4)).current;
+  const dot2 = useRef(new Animated.Value(0.4)).current;
+  const dot3 = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    const createBounce = (anim: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(anim, { toValue: 1, duration: 300, delay, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(anim, { toValue: 0.4, duration: 300, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+        ])
+      );
+    const a1 = createBounce(dot1, 0);
+    const a2 = createBounce(dot2, 150);
+    const a3 = createBounce(dot3, 300);
+    a1.start(); a2.start(); a3.start();
+    return () => { a1.stop(); a2.stop(); a3.stop(); };
+  }, []);
+
+  return (
+    <View style={styles.dotsContainer}>
+      {[dot1, dot2, dot3].map((anim, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            styles.dot,
+            { backgroundColor: color, opacity: anim, transform: [{ scale: anim }] },
+          ]}
+        />
+      ))}
+    </View>
+  );
+};
+
 interface ConversationBubbleProps {
   theme: Theme;
-  // The text the other person said, translated into this person's language (prominent)
   translatedText: string;
-  // The original text as spoken (small, muted)
   originalText: string;
-  // Language codes for alignment
   translatedLang: string;
   originalLang: string;
-  // Which speaker said it
   speaker: 'A' | 'B';
-  // Is this the viewing person's own speech?
   isOwnSpeech: boolean;
-  // Is this the currently active (non-final) segment?
   isCurrent?: boolean;
-  // Animate entrance
   animateIn?: boolean;
-  // Flag emoji for the language
   flag?: string;
 }
 
@@ -44,7 +72,8 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
   flag,
 }) => {
   const fadeAnim = useRef(new Animated.Value(animateIn ? 0 : 1)).current;
-  const slideAnim = useRef(new Animated.Value(animateIn ? 20 : 0)).current;
+  // Slide in from the side: own speech from right, other's from left
+  const slideAnim = useRef(new Animated.Value(animateIn ? (isOwnSpeech ? 40 : -40) : 0)).current;
 
   const isTranslatedRtl = RTL_LANGUAGES.includes(translatedLang);
   const isOriginalRtl = RTL_LANGUAGES.includes(originalLang);
@@ -55,21 +84,19 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
         Animated.timing(fadeAnim, {
           toValue: 1,
           duration: 300,
-          easing: Easing.out(Easing.ease),
+          easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
-        Animated.timing(slideAnim, {
+        Animated.spring(slideAnim, {
           toValue: 0,
-          duration: 300,
-          easing: Easing.out(Easing.ease),
+          tension: 60,
+          friction: 9,
           useNativeDriver: true,
         }),
       ]).start();
     }
   }, [animateIn]);
 
-  // Own speech: right-aligned, muted
-  // Other's speech: left-aligned, prominent
   const bubbleAlignment = isOwnSpeech ? 'flex-end' : 'flex-start';
   const bubbleBg = isOwnSpeech
     ? theme.colors.primary + '15'
@@ -85,12 +112,16 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
         {
           alignSelf: bubbleAlignment,
           opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
+          transform: [{ translateX: slideAnim }],
         },
       ]}
     >
-      <View style={[styles.bubble, { backgroundColor: bubbleBg }]}>
-        {/* Main translated text (prominent for other's speech, muted for own) */}
+      <View style={[
+        styles.bubble,
+        { backgroundColor: bubbleBg },
+        isCurrent && styles.currentBubble,
+      ]}>
+        {/* Main translated text */}
         <Text
           style={[
             isOwnSpeech ? styles.ownMainText : styles.otherMainText,
@@ -101,8 +132,8 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
           ]}
         >
           {translatedText}
-          {isCurrent && <Text style={styles.typingIndicator}> ●</Text>}
         </Text>
+        {isCurrent && <TypingDots color={accentColor} />}
 
         {/* Original text (small, muted) */}
         {originalText && originalText !== translatedText && (
@@ -133,6 +164,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
+  currentBubble: {
+    borderWidth: 1,
+    borderColor: 'rgba(100, 100, 255, 0.15)',
+  },
   otherMainText: {
     fontSize: 18,
     lineHeight: 26,
@@ -149,8 +184,15 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontStyle: 'italic',
   },
-  typingIndicator: {
-    fontSize: 10,
-    opacity: 0.6,
+  dotsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  dot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
   },
 });

@@ -10,7 +10,15 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
-import ReAnimated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import ReAnimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withRepeat,
+  withSequence,
+  FadeInUp
+} from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme } from '../constants/theme';
 import { useDebouncedSpeaking } from '../hooks/useDebouncedSpeaking';
@@ -101,6 +109,136 @@ const AudioVisualizer = ({ isActive, isSpeaking, primaryColor, accentColor }: {
   );
 };
 
+// Animated Typing Dots component
+const TypingDots = ({ color }: { color: string }) => {
+  const dot1Y = useSharedValue(0);
+  const dot2Y = useSharedValue(0);
+  const dot3Y = useSharedValue(0);
+
+  useEffect(() => {
+    dot1Y.value = withRepeat(
+      withSequence(
+        withTiming(-4, { duration: 300 }),
+        withTiming(0, { duration: 300 })
+      ),
+      -1,
+      false
+    );
+    dot2Y.value = withRepeat(
+      withSequence(
+        withTiming(-4, { duration: 300 }),
+        withTiming(0, { duration: 300 })
+      ),
+      -1,
+      false
+    );
+    dot3Y.value = withRepeat(
+      withSequence(
+        withTiming(-4, { duration: 300 }),
+        withTiming(0, { duration: 300 })
+      ),
+      -1,
+      false
+    );
+  }, []);
+
+  const dot1Style = useAnimatedStyle(() => ({
+    transform: [{ translateY: dot1Y.value }],
+  }));
+
+  const dot2Style = useAnimatedStyle(() => ({
+    transform: [{ translateY: dot2Y.value }],
+  }));
+
+  const dot3Style = useAnimatedStyle(() => ({
+    transform: [{ translateY: dot3Y.value }],
+  }));
+
+  // Stagger the animations
+  useEffect(() => {
+    setTimeout(() => {
+      dot2Y.value = withRepeat(
+        withSequence(
+          withTiming(-4, { duration: 300 }),
+          withTiming(0, { duration: 300 })
+        ),
+        -1,
+        false
+      );
+    }, 200);
+
+    setTimeout(() => {
+      dot3Y.value = withRepeat(
+        withSequence(
+          withTiming(-4, { duration: 300 }),
+          withTiming(0, { duration: 300 })
+        ),
+        -1,
+        false
+      );
+    }, 400);
+  }, []);
+
+  return (
+    <View style={styles.typingDotsContainer}>
+      <ReAnimated.View style={[styles.typingDot, { backgroundColor: color }, dot1Style]} />
+      <ReAnimated.View style={[styles.typingDot, { backgroundColor: color }, dot2Style]} />
+      <ReAnimated.View style={[styles.typingDot, { backgroundColor: color }, dot3Style]} />
+    </View>
+  );
+};
+
+// Shimmer Loading Bars component
+const ShimmerBars = ({ accentColor }: { accentColor: string }) => {
+  const translateX = useSharedValue(-200);
+
+  useEffect(() => {
+    translateX.value = withRepeat(
+      withTiming(200, { duration: 1200 }),
+      -1,
+      false
+    );
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const bars = [
+    { width: '85%', height: 14 },
+    { width: '65%', height: 14 },
+    { width: '45%', height: 14 },
+  ];
+
+  return (
+    <View>
+      {bars.map((bar, index) => (
+        <View
+          key={index}
+          style={[
+            styles.shimmerBar,
+            {
+              width: bar.width,
+              height: bar.height,
+              backgroundColor: accentColor + '15',
+              marginBottom: index < bars.length - 1 ? 10 : 0,
+            },
+          ]}
+        >
+          <ReAnimated.View style={[styles.shimmerOverlay, animatedStyle]}>
+            <LinearGradient
+              colors={['transparent', accentColor + '30', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.shimmerGradient}
+            />
+          </ReAnimated.View>
+        </View>
+      ))}
+    </View>
+  );
+};
+
 interface TranscriptPanelProps {
   theme: Theme;
   // Which field to display: 'transcript' for source, 'translation' for target
@@ -161,11 +299,12 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
 }) => {
   const scrollRef = useRef<ScrollView>(null);
   const isAtBottom = useRef(true);
-  const newSentenceOpacity = useRef(new Animated.Value(1)).current;
-  const rotateAnim = useRef(new Animated.Value(0)).current;
 
   // Debounced speaking state to prevent flickering
   const displaySpeaking = useDebouncedSpeaking(isSpeaking, isListening, 500);
+
+  // Current segment pulse animation
+  const currentSegmentOpacity = useSharedValue(1);
 
   // Animated flex for smooth panel expansion
   const flexValue = useSharedValue(1);
@@ -187,23 +326,21 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
   const hasContent = hasContentProp ?? (finalizedSentences.length > 0 || currentText.length > 0);
   const isRtl = RTL_LANGUAGES.includes(languageCode);
 
-  // Rotate animation for processing indicator
+  // Current segment pulse effect
   useEffect(() => {
-    if (isProcessing) {
-      const rotate = Animated.loop(
-        Animated.timing(rotateAnim, {
-          toValue: 1,
-          duration: 1500,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        })
+    if (currentText) {
+      currentSegmentOpacity.value = withRepeat(
+        withSequence(
+          withTiming(0.7, { duration: 500 }),
+          withTiming(1, { duration: 500 })
+        ),
+        -1,
+        true
       );
-      rotate.start();
-      return () => rotate.stop();
     } else {
-      rotateAnim.setValue(0);
+      currentSegmentOpacity.value = 1;
     }
-  }, [isProcessing]);
+  }, [currentText]);
 
   // Auto-scroll when new content arrives
   useEffect(() => {
@@ -214,33 +351,15 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
     }
   }, [finalizedSentences, currentText]);
 
-  // Animate new sentence appearance
-  const animateNewSentence = useCallback(() => {
-    newSentenceOpacity.setValue(0);
-    Animated.timing(newSentenceOpacity, {
-      toValue: 1,
-      duration: 300,
-      easing: Easing.out(Easing.ease),
-      useNativeDriver: true,
-    }).start();
-  }, []);
-
-  useEffect(() => {
-    if (finalizedSentences.length > 0) {
-      animateNewSentence();
-    }
-  }, [finalizedSentences.length]);
-
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
     const paddingToBottom = 50;
     isAtBottom.current = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
   }, []);
 
-  const spin = rotateAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
-  });
+  const currentSegmentAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: currentSegmentOpacity.value,
+  }));
 
   const sentenceCount = finalizedSentences.length + (currentText ? 1 : 0);
 
@@ -295,8 +414,9 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
           <View style={styles.textContainer}>
             {/* Finalized sentences */}
             {finalizedSentences.map((sentence) => (
-              <Animated.Text
+              <ReAnimated.Text
                 key={sentence.id}
+                entering={FadeInUp.duration(300).springify()}
                 style={[
                   styles.panelText,
                   field === 'translation' ? styles.translationText : styles.sourceText,
@@ -305,27 +425,27 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
                 ]}
               >
                 {sentence[field]}
-              </Animated.Text>
+              </ReAnimated.Text>
             ))}
             {/* Current segment */}
             {currentText ? (
-              <Animated.Text
-                style={[
-                  styles.panelText,
-                  field === 'translation' ? styles.translationText : styles.sourceText,
-                  styles.currentText,
-                  { color: accentColor, textAlign: isRtl ? 'right' : 'left', opacity: newSentenceOpacity },
-                ]}
-              >
-                {currentText}
-                <Text style={styles.typingIndicator}> ●</Text>
-              </Animated.Text>
+              <ReAnimated.View style={currentSegmentAnimatedStyle}>
+                <Text
+                  style={[
+                    styles.panelText,
+                    field === 'translation' ? styles.translationText : styles.sourceText,
+                    styles.currentText,
+                    { color: accentColor, textAlign: isRtl ? 'right' : 'left' },
+                  ]}
+                >
+                  {currentText}
+                </Text>
+                <TypingDots color={accentColor} />
+              </ReAnimated.View>
             ) : null}
-            {/* Processing indicator */}
+            {/* Processing shimmer bars */}
             {isProcessing && !currentText && (
-              <Text style={[styles.processingText, { color: theme.colors.textTertiary }]}>
-                {processingText}
-              </Text>
+              <ShimmerBars accentColor={accentColor} />
             )}
           </View>
         ) : (
@@ -350,15 +470,6 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
           </View>
         )}
       </ScrollView>
-
-      {/* Processing spinner overlay */}
-      {isProcessing && (
-        <View style={styles.processingIndicator}>
-          <Animated.View style={{ transform: [{ rotate: spin }] }}>
-            <Ionicons name="sync" size={14} color={accentColor} />
-          </Animated.View>
-        </View>
-      )}
 
       {/* Scroll to bottom button */}
       {!isAtBottom.current && hasContent && (
@@ -434,7 +545,7 @@ const styles = StyleSheet.create({
   },
   panelContent: {
     flex: 1,
-    padding: 16,
+    padding: 18,
   },
   panelContentContainer: {
     flexGrow: 1,
@@ -444,8 +555,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   panelText: {
-    fontSize: 18,
-    lineHeight: 28,
+    fontSize: 20,
+    lineHeight: 32,
     letterSpacing: 0.2,
   },
   sourceText: {
@@ -453,23 +564,43 @@ const styles = StyleSheet.create({
   },
   translationText: {
     fontWeight: '500',
-    fontSize: 20,
-    lineHeight: 30,
+    fontSize: 22,
+    lineHeight: 34,
   },
   finalizedText: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   currentText: {
     marginBottom: 8,
   },
-  typingIndicator: {
-    fontSize: 10,
-    opacity: 0.6,
+  typingDotsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
   },
-  processingText: {
-    fontSize: 14,
-    fontStyle: 'italic',
-    marginTop: 8,
+  typingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  shimmerBar: {
+    borderRadius: 7,
+    overflow: 'hidden',
+  },
+  shimmerOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+  },
+  shimmerGradient: {
+    flex: 1,
+    width: 200,
+    height: '100%',
   },
   emptyPanel: {
     flex: 1,
@@ -478,16 +609,10 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
   },
   emptyText: {
-    fontSize: 16,
+    fontSize: 15,
     textAlign: 'center',
     marginTop: 10,
     fontWeight: '400',
-  },
-  processingIndicator: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    padding: 4,
   },
   scrollToBottomBtn: {
     position: 'absolute',

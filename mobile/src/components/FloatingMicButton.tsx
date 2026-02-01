@@ -14,7 +14,7 @@ import { useDebouncedSpeaking } from '../hooks/useDebouncedSpeaking';
 
 // Glowing Orb Animation
 const GlowingOrb = ({ isActive, size, color }: { isActive: boolean; size: number; color: string }) => {
-  const glowAnim = useRef(new Animated.Value(0.5)).current;
+  const glowAnim = useRef(new Animated.Value(0.6)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -22,14 +22,14 @@ const GlowingOrb = ({ isActive, size, color }: { isActive: boolean; size: number
       const glowAnimation = Animated.loop(
         Animated.sequence([
           Animated.timing(glowAnim, {
-            toValue: 1,
-            duration: 1000,
+            toValue: 0.9,
+            duration: 800,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
           Animated.timing(glowAnim, {
-            toValue: 0.5,
-            duration: 1000,
+            toValue: 0.6,
+            duration: 800,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
@@ -58,7 +58,7 @@ const GlowingOrb = ({ isActive, size, color }: { isActive: boolean; size: number
         scaleAnimation.stop();
       };
     } else {
-      glowAnim.setValue(0.5);
+      glowAnim.setValue(0.6);
       scaleAnim.setValue(1);
     }
   }, [isActive]);
@@ -105,22 +105,51 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const buttonScaleAnim = useRef(new Animated.Value(1)).current;
   const dotColorAnim = useRef(new Animated.Value(0)).current;
+  const floatingAnim = useRef(new Animated.Value(0)).current;
+  const glowFlashAnim = useRef(new Animated.Value(1)).current;
 
   // Debounce the speaking state to prevent rapid flickering
   const displaySpeaking = useDebouncedSpeaking(isSpeaking, isListening, 500);
 
+  // Pulse animation when listening (stronger pulse)
   useEffect(() => {
     if (isListening) {
       const pulse = Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.08, duration: 800, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(pulseAnim, { toValue: 1.12, duration: 700, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
         ])
       );
       pulse.start();
       return () => pulse.stop();
     } else {
       pulseAnim.setValue(1);
+    }
+  }, [isListening]);
+
+  // Floating animation when idle (not listening)
+  useEffect(() => {
+    if (!isListening) {
+      const floating = Animated.loop(
+        Animated.sequence([
+          Animated.timing(floatingAnim, {
+            toValue: 1,
+            duration: 2500,
+            useNativeDriver: true,
+            easing: Easing.inOut(Easing.ease),
+          }),
+          Animated.timing(floatingAnim, {
+            toValue: 0,
+            duration: 2500,
+            useNativeDriver: true,
+            easing: Easing.inOut(Easing.ease),
+          }),
+        ])
+      );
+      floating.start();
+      return () => floating.stop();
+    } else {
+      floatingAnim.setValue(0);
     }
   }, [isListening]);
 
@@ -135,15 +164,30 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
   }, [displaySpeaking]);
 
   const animatePress = () => {
+    // Stronger ripple effect
     Animated.sequence([
       Animated.timing(buttonScaleAnim, {
-        toValue: 0.92,
+        toValue: 0.88,
         duration: 100,
         useNativeDriver: true,
       }),
       Animated.timing(buttonScaleAnim, {
         toValue: 1,
         duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    // Glow flash effect
+    Animated.sequence([
+      Animated.timing(glowFlashAnim, {
+        toValue: 1.3,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(glowFlashAnim, {
+        toValue: 1,
+        duration: 200,
         useNativeDriver: true,
       }),
     ]).start();
@@ -159,13 +203,20 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
     outputRange: [theme.colors.primary, theme.colors.accent],
   });
 
+  // Interpolate floating Y position
+  const floatingY = floatingAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-3, 3],
+  });
+
   return (
     <View style={styles.container}>
       {isListening && (
-        <>
-          <GlowingOrb isActive={true} size={size * 1.94} color={theme.colors.glow} />
-          <GlowingOrb isActive={true} size={size * 2.5} color={theme.colors.glowAccent} />
-        </>
+        <Animated.View style={{ opacity: glowFlashAnim }}>
+          <GlowingOrb isActive={true} size={size * 1.5} color={theme.colors.primary} />
+          <GlowingOrb isActive={true} size={size * 2.2} color={theme.colors.glow} />
+          <GlowingOrb isActive={true} size={size * 3.0} color={theme.colors.glowAccent} />
+        </Animated.View>
       )}
 
       <TouchableOpacity
@@ -173,7 +224,14 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
         activeOpacity={0.9}
         style={styles.touchable}
       >
-        <Animated.View style={{ transform: [{ scale: Animated.multiply(pulseAnim, buttonScaleAnim) }] }}>
+        <Animated.View
+          style={{
+            transform: [
+              { scale: Animated.multiply(pulseAnim, buttonScaleAnim) },
+              { translateY: isListening ? 0 : floatingY },
+            ],
+          }}
+        >
           <LinearGradient
             colors={isListening
               ? [theme.colors.error, theme.colors.errorLight] as [string, string]
@@ -194,7 +252,15 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
       <View style={styles.statusContainer}>
         {isListening ? (
           <View style={styles.statusRow}>
-            <Animated.View style={[styles.recordingDot, { backgroundColor: dotColor }]} />
+            <Animated.View
+              style={[
+                styles.recordingDot,
+                {
+                  backgroundColor: dotColor,
+                  shadowColor: dotColor,
+                },
+              ]}
+            />
             <Text style={[styles.statusText, { color: theme.colors.text }]}>
               Tap to stop
             </Text>
@@ -229,9 +295,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     shadowColor: '#6366F1',
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 10,
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 14,
   },
   statusContainer: {
     marginTop: 12,
@@ -242,13 +308,15 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   recordingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    shadowRadius: 6,
+    shadowOpacity: 0.6,
   },
   statusText: {
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '600',
     textAlign: 'center',
   },
 });

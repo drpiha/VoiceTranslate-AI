@@ -72,6 +72,11 @@ class TranslationService {
   private readonly RETRY_INTERVAL_MS = 10000;
   private readonly MAX_FAIL_COUNT = 3;
 
+  // Preconnect / keepalive state
+  private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+  private preconnected: boolean = false;
+  private preconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
   // DeepL language code mapping (some differ from ISO 639-1)
   private mapToDeepLLang(code: string): string {
     const map: Record<string, string> = {
@@ -339,6 +344,138 @@ class TranslationService {
     return this.useBackend;
   }
 
+  // Preconnect WebSocket silently (call on tab mount for instant recording)
+  async preconnect(): Promise<void> {
+    if (this.isConnected()) {
+      return; // Already connected
+    }
+
+    try {
+      const accessToken = await tokenStorage.getValidAccessToken();
+      let url = `${WS_BASE_URL}/translate`;
+      if (accessToken) {
+        url += `?token=${encodeURIComponent(accessToken)}`;
+      }
+
+      console.log('Preconnecting WebSocket...');
+      this.socket = new WebSocket(url);
+      this.preconnected = true;
+
+      this.socket.onopen = () => {
+        console.log('WebSocket preconnected');
+        this.startKeepAlive();
+      };
+
+      this.socket.onmessage = (event) => {
+        try {
+          const rawData = JSON.parse(event.data);
+          if (rawData.type === 'pong') return; // Keepalive response
+
+          const flatData: RealtimeTranslationResult = {
+            type: rawData.type,
+            ...(rawData.data || {}),
+          };
+          if (rawData.type === 'error' && rawData.data) {
+            flatData.error = rawData.data.message || rawData.data.code || 'Unknown error';
+          }
+          if (this.onMessageCallback) {
+            this.onMessageCallback(flatData);
+          }
+        } catch (error) {
+          console.error('WebSocket message parsing error:', error);
+        }
+      };
+
+      this.socket.onerror = () => {
+        console.log('Preconnect WebSocket error, will retry');
+        this.stopKeepAlive();
+      };
+
+      this.socket.onclose = () => {
+        console.log('Preconnect WebSocket closed');
+        this.stopKeepAlive();
+        // Auto-reconnect silently after 5s if we were preconnected
+        if (this.preconnected) {
+          this.preconnectRetryTimer = setTimeout(() => {
+            this.preconnect();
+          }, 5000);
+        }
+      };
+    } catch (error) {
+      console.log('Preconnect failed:', error);
+    }
+  }
+
+  private startKeepAlive(): void {
+    this.stopKeepAlive();
+    this.keepAliveTimer = setInterval(() => {
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        try {
+          this.socket.send(JSON.stringify({ type: 'ping' }));
+        } catch {
+          // Socket error, will be handled by onclose
+        }
+      }
+    }, 25000); // Ping every 25s
+  }
+
+  private stopKeepAlive(): void {
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+    if (this.preconnectRetryTimer) {
+      clearTimeout(this.preconnectRetryTimer);
+      this.preconnectRetryTimer = null;
+    }
+  }
+
+  // Ensure connection is ready (reuse preconnect or establish new)
+  async ensureConnected(
+    onMessage: (data: RealtimeTranslationResult) => void,
+    onError?: (error: any) => void,
+    onConnected?: () => void
+  ): Promise<void> {
+    this.onMessageCallback = onMessage;
+
+    if (this.isConnected()) {
+      // Already connected (preconnected) - just update callbacks and fire onConnected
+      console.log('Reusing preconnected WebSocket');
+      // Re-attach handlers so new callbacks are used
+      this.socket!.onmessage = (event) => {
+        try {
+          const rawData = JSON.parse(event.data);
+          if (rawData.type === 'pong') return;
+          const flatData: RealtimeTranslationResult = {
+            type: rawData.type,
+            ...(rawData.data || {}),
+          };
+          if (rawData.type === 'error' && rawData.data) {
+            flatData.error = rawData.data.message || rawData.data.code || 'Unknown error';
+          }
+          if (this.onMessageCallback) {
+            this.onMessageCallback(flatData);
+          }
+        } catch (error) {
+          console.error('WebSocket message parsing error:', error);
+        }
+      };
+      this.socket!.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        if (onError) onError(error);
+      };
+      this.socket!.onclose = (event) => {
+        console.log('WebSocket disconnected:', event.code, event.reason);
+        this.stopKeepAlive();
+      };
+      if (onConnected) onConnected();
+      return;
+    }
+
+    // Not connected - do full connect
+    return this.connectRealtimeWebSocket(onMessage, onError, onConnected);
+  }
+
   // Connect to real-time translation WebSocket
   async connectRealtimeWebSocket(
     onMessage: (data: RealtimeTranslationResult) => void,
@@ -467,6 +604,8 @@ class TranslationService {
   }
 
   disconnect(): void {
+    this.preconnected = false;
+    this.stopKeepAlive();
     if (this.socket) {
       this.socket.close();
       this.socket = null;

@@ -60,6 +60,10 @@ export default function LiveScreen() {
   const [sourcePanelExpanded, setSourcePanelExpanded] = useState(false);
   const [targetPanelExpanded, setTargetPanelExpanded] = useState(false);
 
+  // Swap animation
+  const swapRotation = useRef(new Animated.Value(0)).current;
+  const swapRotationCount = useRef(0);
+
   // Auto-reconnect state
   const reconnectAttempts = useRef(0);
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
@@ -213,13 +217,7 @@ export default function LiveScreen() {
     setConnectionError(null);
     reconnectAttempts.current = 0;
 
-    if (translationService.isConnected()) {
-      translationService.disconnect();
-      setIsConnected(false);
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Await WebSocket connection before starting audio
+    // Use ensureConnected - reuses preconnected WebSocket if available (instant start)
     try {
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -228,7 +226,7 @@ export default function LiveScreen() {
 
         setConnectionError(null);
         setBackendStatus('checking');
-        translationService.connectRealtimeWebSocket(
+        translationService.ensureConnected(
           handleWebSocketMessage,
           (error) => {
             clearTimeout(timeout);
@@ -253,7 +251,7 @@ export default function LiveScreen() {
       return;
     }
 
-    // Only start audio AFTER WebSocket is confirmed connected
+    // Start audio AFTER WebSocket is confirmed connected
     const success = await audioService.startRealtimeMode(
       handleSegmentReady,
       handleMeteringUpdate
@@ -325,18 +323,33 @@ export default function LiveScreen() {
     setConnectionError(null);
   };
 
-  // Swap languages
+  // Swap languages with animation
   const handleSwapLanguages = () => {
     handleHaptic();
     if (sourceLanguage === 'auto' && !detectedLang) {
       Alert.alert('Cannot Swap', 'Please select a specific source language or speak first to detect the language.');
       return;
     }
+
+    // Animate swap icon rotation
+    swapRotationCount.current += 1;
+    Animated.spring(swapRotation, {
+      toValue: swapRotationCount.current,
+      useNativeDriver: true,
+      tension: 50,
+      friction: 8,
+    }).start();
+
     const actualSourceLang = detectedLang || sourceLanguage;
     setSourceLanguage(targetLanguage);
     setTargetLanguage(actualSourceLang === 'auto' ? 'en' : actualSourceLang);
     setDetectedLang(null);
   };
+
+  const swapSpin = swapRotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
 
   // Retranslate when target language changes
   const handleTargetLanguageChange = (newLang: string) => {
@@ -378,6 +391,11 @@ export default function LiveScreen() {
       setIsRetranslating(false);
     }
   };
+
+  // Preconnect WebSocket on mount for instant recording
+  useEffect(() => {
+    translationService.preconnect();
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -447,14 +465,16 @@ export default function LiveScreen() {
           </View>
 
           <TouchableOpacity onPress={handleSwapLanguages} style={styles.arrowContainer}>
-            <LinearGradient
-              colors={[theme.colors.gradient1, theme.colors.gradient2] as [string, string]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.arrowBadge}
-            >
-              <Ionicons name="swap-horizontal" size={18} color="#FFF" />
-            </LinearGradient>
+            <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
+              <LinearGradient
+                colors={[theme.colors.gradient1, theme.colors.gradient2] as [string, string]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.arrowBadge}
+              >
+                <Ionicons name="swap-horizontal" size={18} color="#FFF" />
+              </LinearGradient>
+            </Animated.View>
           </TouchableOpacity>
 
           <View style={styles.languageSelectorWrapper}>

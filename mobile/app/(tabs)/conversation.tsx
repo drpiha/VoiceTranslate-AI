@@ -57,6 +57,16 @@ export default function ConversationScreen() {
   const scrollRefB = useRef<ScrollView>(null);
   const segmentIdCounter = useRef(0);
 
+  // Swap animation
+  const swapRotation = useRef(new Animated.Value(0)).current;
+  const swapRotationCount = useRef(0);
+
+  // Active speak button animations
+  const speakAPulse = useRef(new Animated.Value(1)).current;
+  const speakBPulse = useRef(new Animated.Value(1)).current;
+  const badgeAGlow = useRef(new Animated.Value(0)).current;
+  const badgeBGlow = useRef(new Animated.Value(0)).current;
+
   // Refs to avoid stale closures in callbacks passed to services
   const activeSpeakerRef = useRef(activeSpeaker);
   const personALangRef = useRef(personALang);
@@ -77,6 +87,11 @@ export default function ConversationScreen() {
   // Load persisted language selections on mount
   useEffect(() => {
     loadLanguages();
+  }, []);
+
+  // Preconnect WebSocket on mount for instant recording
+  useEffect(() => {
+    translationService.preconnect();
   }, []);
 
   // Auto-scroll when new turns arrive
@@ -178,24 +193,17 @@ export default function ConversationScreen() {
     setActiveSpeaker(speaker);
     setConnectionError(null);
 
-    // Disconnect existing WebSocket if any
-    if (translationService.isConnected()) {
-      translationService.disconnect();
-      setIsConnected(false);
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
     const sourceLang = speaker === 'A' ? personALang : personBLang;
     const targetLang = speaker === 'A' ? personBLang : personALang;
 
-    // Await WebSocket connection before starting audio
+    // Use ensureConnected - reuses preconnected WebSocket if available (instant start)
     try {
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('Connection timeout'));
         }, 5000);
 
-        translationService.connectRealtimeWebSocket(
+        translationService.ensureConnected(
           handleWebSocketMessage,
           (error) => {
             clearTimeout(timeout);
@@ -218,7 +226,7 @@ export default function ConversationScreen() {
       return;
     }
 
-    // Only start audio AFTER WebSocket is confirmed connected
+    // Start audio AFTER WebSocket is confirmed connected
     const success = await audioService.startRealtimeMode(
       handleSegmentReady,
       handleMeteringUpdate
@@ -256,6 +264,58 @@ export default function ConversationScreen() {
     clearConversation();
     setConnectionError(null);
   };
+
+  // Pulse animation for active speak button + badge glow
+  useEffect(() => {
+    if (isListening && activeSpeaker === 'A') {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(speakAPulse, { toValue: 1.04, duration: 600, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(speakAPulse, { toValue: 1, duration: 600, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+        ])
+      );
+      const glow = Animated.loop(
+        Animated.sequence([
+          Animated.timing(badgeAGlow, { toValue: 1, duration: 600, useNativeDriver: false, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(badgeAGlow, { toValue: 0, duration: 600, useNativeDriver: false, easing: Easing.inOut(Easing.ease) }),
+        ])
+      );
+      pulse.start();
+      glow.start();
+      return () => { pulse.stop(); glow.stop(); };
+    } else {
+      speakAPulse.setValue(1);
+      badgeAGlow.setValue(0);
+    }
+  }, [isListening, activeSpeaker]);
+
+  useEffect(() => {
+    if (isListening && activeSpeaker === 'B') {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(speakBPulse, { toValue: 1.04, duration: 600, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(speakBPulse, { toValue: 1, duration: 600, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+        ])
+      );
+      const glow = Animated.loop(
+        Animated.sequence([
+          Animated.timing(badgeBGlow, { toValue: 1, duration: 600, useNativeDriver: false, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(badgeBGlow, { toValue: 0, duration: 600, useNativeDriver: false, easing: Easing.inOut(Easing.ease) }),
+        ])
+      );
+      pulse.start();
+      glow.start();
+      return () => { pulse.stop(); glow.stop(); };
+    } else {
+      speakBPulse.setValue(1);
+      badgeBGlow.setValue(0);
+    }
+  }, [isListening, activeSpeaker]);
+
+  const swapSpin = swapRotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
 
   // Cleanup on unmount
   useEffect(() => {
@@ -299,32 +359,72 @@ export default function ConversationScreen() {
   // Debounce the speaking state to prevent rapid label flickering
   const displaySpeaking = useDebouncedSpeaking(isSpeaking, isListening, 500);
 
+  // Mini waveform bars for active speak button
+  const WaveformBar = ({ delay, color }: { delay: number; color: string }) => {
+    const anim = useRef(new Animated.Value(0.3)).current;
+
+    useEffect(() => {
+      const wave = Animated.loop(
+        Animated.sequence([
+          Animated.timing(anim, { toValue: 1, duration: 250 + Math.random() * 150, delay, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(anim, { toValue: 0.3, duration: 250 + Math.random() * 150, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+        ])
+      );
+      wave.start();
+      return () => wave.stop();
+    }, []);
+
+    return (
+      <Animated.View style={{ width: 3, height: 16, borderRadius: 1.5, backgroundColor: color, transform: [{ scaleY: anim }] }} />
+    );
+  };
+
   const SpeakButton = ({ person, isTop }: { person: 'A' | 'B'; isTop: boolean }) => {
     const isActive = isListening && activeSpeaker === person;
     const isOtherActive = isListening && activeSpeaker !== person;
-    const accentColor = person === 'A' ? theme.colors.accent : theme.colors.secondary;
+    const pulseAnim = person === 'A' ? speakAPulse : speakBPulse;
+    const gradientColors = isActive
+      ? [theme.colors.error, theme.colors.errorLight] as [string, string]
+      : person === 'A'
+        ? [theme.colors.accent, theme.colors.primary] as [string, string]
+        : [theme.colors.secondary, theme.colors.accent] as [string, string];
 
     return (
       <TouchableOpacity
         onPress={() => isActive ? stopSpeaking() : startSpeaking(person)}
         disabled={isOtherActive}
         activeOpacity={0.8}
-        style={[
-          styles.speakButton,
-          { backgroundColor: isActive ? theme.colors.error : accentColor },
-          isOtherActive && styles.speakButtonDisabled,
-        ]}
       >
-        <Ionicons
-          name={isActive ? 'stop' : 'mic'}
-          size={20}
-          color="#FFF"
-        />
-        <Text style={styles.speakButtonText}>
-          {isActive
-            ? 'Tap to stop'
-            : `Tap to speak - Person ${person}`}
-        </Text>
+        <Animated.View style={[
+          isOtherActive && styles.speakButtonDisabled,
+          { transform: [{ scale: pulseAnim }] },
+        ]}>
+          <LinearGradient
+            colors={gradientColors}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.speakButton}
+          >
+            {isActive && displaySpeaking ? (
+              <View style={styles.waveformContainer}>
+                {[0, 60, 120, 180].map((delay, i) => (
+                  <WaveformBar key={i} delay={delay} color="#FFF" />
+                ))}
+              </View>
+            ) : (
+              <Ionicons
+                name={isActive ? 'stop' : 'mic'}
+                size={20}
+                color="#FFF"
+              />
+            )}
+            <Text style={styles.speakButtonText}>
+              {isActive
+                ? (displaySpeaking ? 'Listening...' : 'Tap to stop')
+                : `Tap to speak - Person ${person}`}
+            </Text>
+          </LinearGradient>
+        </Animated.View>
       </TouchableOpacity>
     );
   };
@@ -392,10 +492,21 @@ export default function ConversationScreen() {
       {/* Language Bar - Center (NOT rotated, both selectors accessible) */}
       <View style={[styles.languageBar, { backgroundColor: theme.colors.card }]}>
         <View style={styles.langBarSide}>
-          <View style={[styles.personBadge, { backgroundColor: theme.colors.accent + '15' }]}>
+          <Animated.View style={[
+            styles.personBadge,
+            {
+              backgroundColor: badgeAGlow.interpolate({
+                inputRange: [0, 1],
+                outputRange: [theme.colors.accent + '15', theme.colors.accent + '40'],
+              }),
+            },
+          ]}>
             <Text style={styles.personFlag}>{personAInfo?.flag || '🌐'}</Text>
             <Text style={[styles.personLabel, { color: theme.colors.accent }]}>A</Text>
-          </View>
+            {isListening && activeSpeaker === 'A' && (
+              <View style={[styles.activeDot, { backgroundColor: theme.colors.accent }]} />
+            )}
+          </Animated.View>
           <View style={styles.langSelectCompact}>
             <LanguageSelector value={personALang} onChange={setPersonALang} excludeAuto />
           </View>
@@ -404,30 +515,50 @@ export default function ConversationScreen() {
         <TouchableOpacity
           onPress={() => {
             handleHaptic();
+            swapRotationCount.current += 1;
+            Animated.spring(swapRotation, {
+              toValue: swapRotationCount.current,
+              useNativeDriver: true,
+              tension: 50,
+              friction: 8,
+            }).start();
             const tempLang = personALang;
             setPersonALang(personBLang);
             setPersonBLang(tempLang);
           }}
           style={styles.swapButton}
         >
-          <LinearGradient
-            colors={[theme.colors.secondary, theme.colors.accent] as [string, string]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.swapButtonGradient}
-          >
-            <Ionicons name="swap-horizontal" size={16} color="#FFF" />
-          </LinearGradient>
+          <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
+            <LinearGradient
+              colors={[theme.colors.secondary, theme.colors.accent] as [string, string]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.swapButtonGradient}
+            >
+              <Ionicons name="swap-horizontal" size={16} color="#FFF" />
+            </LinearGradient>
+          </Animated.View>
         </TouchableOpacity>
 
         <View style={styles.langBarSide}>
           <View style={styles.langSelectCompact}>
             <LanguageSelector value={personBLang} onChange={setPersonBLang} excludeAuto />
           </View>
-          <View style={[styles.personBadge, { backgroundColor: theme.colors.secondary + '15' }]}>
+          <Animated.View style={[
+            styles.personBadge,
+            {
+              backgroundColor: badgeBGlow.interpolate({
+                inputRange: [0, 1],
+                outputRange: [theme.colors.secondary + '15', theme.colors.secondary + '40'],
+              }),
+            },
+          ]}>
             <Text style={styles.personFlag}>{personBInfo?.flag || '🌐'}</Text>
             <Text style={[styles.personLabel, { color: theme.colors.secondary }]}>B</Text>
-          </View>
+            {isListening && activeSpeaker === 'B' && (
+              <View style={[styles.activeDot, { backgroundColor: theme.colors.secondary }]} />
+            )}
+          </Animated.View>
         </View>
       </View>
 
@@ -611,6 +742,18 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  waveformContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    height: 20,
+  },
+  activeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginLeft: 2,
   },
   errorBanner: {
     flexDirection: 'row',
