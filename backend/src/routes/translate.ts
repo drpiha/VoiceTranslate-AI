@@ -162,7 +162,7 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * POST /api/translate/stt
    * Speech-to-text transcription.
-   * Accepts audio file and returns transcribed text.
+   * Accepts JSON body with base64-encoded audio data.
    */
   fastify.post(
     '/stt',
@@ -171,39 +171,44 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const data = await (request as any).file();
+        const body = request.body as {
+          audio: string;
+          encoding?: string;
+          language?: string;
+          mimeType?: string;
+        };
 
-        if (!data) {
+        if (!body || !body.audio) {
           return reply.code(400).send({
             success: false,
-            error: 'No audio file provided',
+            error: 'No audio data provided. Send { audio: "<base64>", encoding: "M4A", language: "auto" }',
           });
         }
 
-        // Read file buffer
-        const buffer = await data.toBuffer();
-        const audioData = buffer.toString('base64');
-
-        // Determine encoding from mimetype
-        let encoding: 'MP3' | 'M4A' | 'WAV' | 'WEBM_OPUS' = 'MP3';
-        if (data.mimetype.includes('m4a') || data.mimetype.includes('mp4')) {
-          encoding = 'M4A';
-        } else if (data.mimetype.includes('wav')) {
-          encoding = 'WAV';
-        } else if (data.mimetype.includes('webm')) {
+        // Determine encoding from mimeType or explicit encoding field
+        let encoding: 'MP3' | 'M4A' | 'WAV' | 'WEBM_OPUS' = 'M4A';
+        const mime = body.mimeType || '';
+        const enc = body.encoding || '';
+        if (enc === 'WEBM_OPUS' || mime.includes('webm')) {
           encoding = 'WEBM_OPUS';
+        } else if (enc === 'WAV' || mime.includes('wav')) {
+          encoding = 'WAV';
+        } else if (enc === 'MP3' || mime.includes('mp3') || mime.includes('mpeg')) {
+          encoding = 'MP3';
+        } else if (enc === 'M4A' || mime.includes('m4a') || mime.includes('mp4') || mime.includes('aac')) {
+          encoding = 'M4A';
         }
 
-        const languageCode = request.query ? (request.query as any).language || 'auto' : 'auto';
+        const languageCode = body.language || 'auto';
 
-        logger.debug('STT request', {
+        logger.info('STT request', {
           encoding,
-          audioSize: buffer.length,
+          audioSize: body.audio.length,
           languageCode,
         });
 
         const result = await sttService.transcribe({
-          audioData,
+          audioData: body.audio,
           encoding,
           sampleRateHertz: 16000,
           languageCode,

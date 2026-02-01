@@ -184,7 +184,7 @@ class TranslationService {
     ];
   }
 
-  // Speech-to-text: send recorded audio to backend STT endpoint
+  // Speech-to-text: send recorded audio to backend STT endpoint as base64 JSON
   async transcribeAudio(audioUri: string, languageCode: string = 'auto'): Promise<{ transcript: string; detectedLanguage?: string; confidence?: number }> {
     if (!this.useBackend) {
       throw new Error('Backend not available');
@@ -193,35 +193,43 @@ class TranslationService {
     try {
       const accessToken = await tokenStorage.getValidAccessToken();
 
-      // Build form data with audio file
-      const formData = new FormData();
+      // Read audio file as base64
+      let audioBase64: string;
+      let mimeType: string;
 
       if (Platform.OS === 'web') {
-        // Web: fetch the blob and append
         const response = await fetch(audioUri);
         const blob = await response.blob();
-        formData.append('file', blob, 'audio.webm');
+        audioBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1] || result);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        mimeType = 'audio/webm';
       } else {
-        // Native: append file URI directly
-        const fileInfo = await FileSystem.getInfoAsync(audioUri);
-        if (!fileInfo.exists) {
-          throw new Error('Audio file not found');
-        }
-        formData.append('file', {
-          uri: audioUri,
-          type: audioUri.endsWith('.m4a') ? 'audio/m4a' : 'audio/mp4',
-          name: 'audio.m4a',
-        } as any);
+        audioBase64 = await FileSystem.readAsStringAsync(audioUri, {
+          encoding: 'base64',
+        });
+        mimeType = audioUri.endsWith('.m4a') ? 'audio/m4a' : 'audio/mp4';
       }
 
       const response = await fetch(
-        `${API_BASE_URL}/translate/stt?language=${encodeURIComponent(languageCode)}`,
+        `${API_BASE_URL}/translate/stt`,
         {
           method: 'POST',
           headers: {
+            'Content-Type': 'application/json',
             ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
           },
-          body: formData,
+          body: JSON.stringify({
+            audio: audioBase64,
+            mimeType,
+            language: languageCode,
+          }),
         }
       );
 
