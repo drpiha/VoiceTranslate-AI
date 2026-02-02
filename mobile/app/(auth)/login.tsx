@@ -10,6 +10,9 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
+  Animated,
+  Easing,
+  Dimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -47,6 +50,21 @@ export default function LoginScreen() {
   // Google Auth hook
   const { request, response, promptAsync } = useGoogleAuth();
   const googleAuthEnabled = isGoogleAuthConfigured();
+
+  // Logo animation
+  const logoScale = useRef(new Animated.Value(0.8)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const formSlide = useRef(new Animated.Value(30)).current;
+  const formOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(logoScale, { toValue: 1, tension: 50, friction: 7, useNativeDriver: true }),
+      Animated.timing(logoOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
+      Animated.timing(formSlide, { toValue: 0, duration: 500, delay: 200, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+      Animated.timing(formOpacity, { toValue: 1, duration: 500, delay: 200, useNativeDriver: true }),
+    ]).start();
+  }, []);
 
   // Check for stored OAuth response from redirect page
   useEffect(() => {
@@ -273,51 +291,12 @@ export default function LoginScreen() {
       return;
     }
 
-    // Check backend connectivity first
+    // Open Google dialog immediately - no blocking health check
+    // If server is down, the backend auth call will fail with a proper error
     setIsGoogleLoading(true);
     try {
-      const { getApiBaseUrl } = await import('../../src/config/api.config');
-      const baseUrl = getApiBaseUrl();
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-      try {
-        const healthUrl = baseUrl.replace('/api', '') + '/health';
-        const healthResponse = await fetch(healthUrl, {
-          method: 'GET',
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        if (!healthResponse.ok) {
-          setIsGoogleLoading(false);
-          Alert.alert(
-            'Server Error',
-            'The server is experiencing issues. Please try again later.'
-          );
-          return;
-        }
-      } catch (healthError: any) {
-        clearTimeout(timeoutId);
-        setIsGoogleLoading(false);
-        if (healthError.name === 'AbortError') {
-          Alert.alert(
-            'Server Starting',
-            'The server is waking up. This may take up to 30 seconds. Please wait and try again.'
-          );
-        } else {
-          Alert.alert(
-            'Connection Error',
-            'Cannot connect to server. Please check your internet connection and try again.'
-          );
-        }
-        return;
-      }
-
       // Store codeVerifier for later use in redirect handling
       if (request.codeVerifier) {
-        console.log('Storing codeVerifier for OAuth redirect...');
         await AsyncStorage.setItem(CODE_VERIFIER_KEY, request.codeVerifier);
       }
 
@@ -366,47 +345,75 @@ export default function LoginScreen() {
       style={[styles.container, { backgroundColor: theme.colors.background }]}
     >
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        {/* Premium header with large branding */}
         <LinearGradient
-          colors={[theme.colors.gradient1, theme.colors.gradient2]}
+          colors={[theme.colors.gradient1, theme.colors.gradient2, theme.colors.accent]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.header}
         >
-          <Text style={styles.logo}>🌐</Text>
-          <Text style={styles.appName}>VoiceTranslate AI</Text>
-          <Text style={styles.tagline}>Break language barriers instantly</Text>
+          <Animated.View style={[styles.logoContainer, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}>
+            <View style={styles.logoCircle}>
+              <Text style={styles.logo}>🌐</Text>
+            </View>
+            <Text style={styles.appName}>VoiceTranslate AI</Text>
+            <Text style={styles.tagline}>Break language barriers instantly</Text>
+          </Animated.View>
+
+          {/* Feature pills */}
+          <View style={styles.featurePills}>
+            <View style={styles.featurePill}>
+              <Text style={styles.featurePillText}>Real-time</Text>
+            </View>
+            <View style={styles.featurePill}>
+              <Text style={styles.featurePillText}>50+ Languages</Text>
+            </View>
+            <View style={styles.featurePill}>
+              <Text style={styles.featurePillText}>AI Powered</Text>
+            </View>
+          </View>
         </LinearGradient>
 
-        <View style={styles.form}>
-          <Text style={[styles.title, { color: theme.colors.text }]}>Welcome Back</Text>
-          <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
-            Sign in to continue
-          </Text>
+        {/* Animated form section */}
+        <Animated.View style={[styles.form, { opacity: formOpacity, transform: [{ translateY: formSlide }] }]}>
 
-          {/* Google Sign In Button */}
+          {/* Google Sign In Button - Primary CTA */}
           {googleAuthEnabled && (
             <TouchableOpacity
-              style={[styles.googleButton, { borderColor: theme.colors.border }]}
+              style={styles.googleButton}
               onPress={handleGoogleLogin}
               disabled={isGoogleLoading || !request}
+              activeOpacity={0.8}
             >
-              {isGoogleLoading ? (
-                <ActivityIndicator color="#4285F4" />
-              ) : (
-                <>
-                  <View style={styles.googleIconContainer}>
-                    <Text style={styles.googleIconG}>G</Text>
-                  </View>
-                  <Text style={styles.googleText}>Continue with Google</Text>
-                </>
-              )}
+              <LinearGradient
+                colors={['#FFFFFF', '#F8F9FA']}
+                style={styles.googleButtonInner}
+              >
+                {isGoogleLoading ? (
+                  <ActivityIndicator color="#4285F4" />
+                ) : (
+                  <>
+                    <View style={styles.googleIconContainer}>
+                      <Text style={styles.googleIconG}>G</Text>
+                    </View>
+                    <Text style={styles.googleText}>Continue with Google</Text>
+                  </>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
           )}
+
+          {/* Guest mode */}
+          <TouchableOpacity onPress={handleGuestLogin} style={styles.guestButton} activeOpacity={0.7}>
+            <Text style={[styles.guestButtonText, { color: theme.colors.primary }]}>
+              Try without account
+            </Text>
+          </TouchableOpacity>
 
           {googleAuthEnabled && (
             <View style={styles.dividerContainer}>
               <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
-              <Text style={[styles.dividerText, { color: theme.colors.textSecondary }]}>or</Text>
+              <Text style={[styles.dividerText, { color: theme.colors.textTertiary }]}>or sign in with email</Text>
               <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
             </View>
           )}
@@ -422,7 +429,7 @@ export default function LoginScreen() {
               },
             ]}
             placeholder="Email"
-            placeholderTextColor={theme.colors.textSecondary}
+            placeholderTextColor={theme.colors.textTertiary}
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
@@ -441,36 +448,36 @@ export default function LoginScreen() {
               },
             ]}
             placeholder="Password"
-            placeholderTextColor={theme.colors.textSecondary}
+            placeholderTextColor={theme.colors.textTertiary}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
           />
 
-          {/* Forgot Password */}
-          <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotPassword}>
-            <Text style={[styles.forgotPasswordText, { color: theme.colors.primary }]}>
-              Forgot Password?
-            </Text>
-          </TouchableOpacity>
+          {/* Actions row */}
+          <View style={styles.actionsRow}>
+            <TouchableOpacity onPress={handleForgotPassword}>
+              <Text style={[styles.forgotPasswordText, { color: theme.colors.textSecondary }]}>
+                Forgot Password?
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           {/* Sign In Button */}
-          <Button
-            title="Sign In"
-            onPress={handleLogin}
-            isLoading={isLoading}
-            fullWidth
-            style={styles.button}
-          />
-
-          {/* Guest Button */}
-          <Button
-            title="Continue as Guest"
-            onPress={handleGuestLogin}
-            variant="outline"
-            fullWidth
-            style={styles.button}
-          />
+          <TouchableOpacity onPress={handleLogin} disabled={isLoading} activeOpacity={0.8}>
+            <LinearGradient
+              colors={[theme.colors.gradient1, theme.colors.gradient2]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.signInButton}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#FFF" />
+              ) : (
+                <Text style={styles.signInButtonText}>Sign In</Text>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
 
           {/* Sign Up Link */}
           <TouchableOpacity onPress={handleSignUpPress} style={styles.signUpContainer}>
@@ -479,11 +486,13 @@ export default function LoginScreen() {
               <Text style={[styles.signUpLink, { color: theme.colors.primary }]}>Sign Up</Text>
             </Text>
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const styles = StyleSheet.create({
   container: {
@@ -493,96 +502,155 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   header: {
-    paddingTop: 60,
-    paddingBottom: 32,
+    paddingTop: 70,
+    paddingBottom: 36,
     alignItems: 'center',
+    borderBottomLeftRadius: 32,
+    borderBottomRightRadius: 32,
+  },
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  logoCircle: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   logo: {
-    fontSize: 50,
-    marginBottom: 12,
+    fontSize: 42,
   },
   appName: {
-    fontSize: 26,
-    fontWeight: '700',
+    fontSize: 30,
+    fontWeight: '800',
     color: '#FFFFFF',
+    letterSpacing: -0.5,
     marginBottom: 6,
   },
   tagline: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: 15,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '400',
+  },
+  featurePills: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  featurePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  featurePillText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
   },
   form: {
     flex: 1,
     padding: 24,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    marginBottom: 24,
+    paddingTop: 28,
   },
   googleButton: {
+    marginBottom: 12,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  googleButtonInner: {
     height: 56,
-    borderRadius: 12,
-    borderWidth: 1,
-    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
-    marginBottom: 16,
   },
   googleIconContainer: {
-    width: 24,
-    height: 24,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#4285F4',
     alignItems: 'center',
     justifyContent: 'center',
   },
   googleIconG: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#4285F4',
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   googleText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333333',
+    color: '#1A1A2E',
+  },
+  guestButton: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    marginBottom: 8,
+  },
+  guestButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
   },
   dividerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginVertical: 16,
   },
   divider: {
     flex: 1,
     height: 1,
   },
   dividerText: {
-    paddingHorizontal: 16,
-    fontSize: 14,
+    paddingHorizontal: 12,
+    fontSize: 12,
   },
   input: {
-    height: 56,
-    borderRadius: 12,
+    height: 52,
+    borderRadius: 14,
     borderWidth: 1,
     paddingHorizontal: 16,
-    fontSize: 16,
-    marginBottom: 16,
+    fontSize: 15,
+    marginBottom: 12,
   },
-  forgotPassword: {
-    alignSelf: 'flex-end',
+  actionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
     marginBottom: 16,
-    marginTop: -8,
+    marginTop: -4,
   },
   forgotPasswordText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
   },
-  button: {
-    marginTop: 8,
+  signInButton: {
+    height: 52,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  signInButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
   signUpContainer: {
     marginTop: 20,
@@ -592,6 +660,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   signUpLink: {
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });
