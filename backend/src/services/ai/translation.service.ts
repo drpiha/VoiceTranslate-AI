@@ -48,7 +48,7 @@ export interface TranslationResponse {
   /** Character count */
   characterCount: number;
   /** Translation provider used */
-  provider: 'deepl' | 'google' | 'mock';
+  provider: 'deepl' | 'google' | 'openrouter' | 'mock';
 }
 
 /**
@@ -566,7 +566,7 @@ RULES:
         targetLang: request.targetLang,
         confidence: 0.95,
         characterCount: request.text.length,
-        provider: 'deepl', // Using 'deepl' as a placeholder since we don't have 'openrouter' in the type
+        provider: 'openrouter',
       };
     } catch (error) {
       logger.error('OpenRouter translation failed', { error: (error as Error).message });

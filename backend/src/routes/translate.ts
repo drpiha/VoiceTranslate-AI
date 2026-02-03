@@ -10,6 +10,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { TranslateService } from '../services/translate.service.js';
 import { sttService } from '../services/ai/stt.service.js';
+import { ttsService } from '../services/ai/tts.service.js';
 import { validateBody, validateQuery, languageCodeSchema, paginationSchema } from '../middleware/validateRequest.js';
 import { authenticate, authenticateOptional } from '../middleware/authenticate.js';
 import { checkTranslationRateLimit } from '../plugins/rateLimit.plugin.js';
@@ -213,7 +214,7 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
         const result = await sttService.transcribe({
           audioData: body.audio,
           encoding,
-          sampleRateHertz: 16000,
+          sampleRateHertz: 48000,
           languageCode,
           enableAutomaticPunctuation: true,
         });
@@ -232,6 +233,75 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.code(500).send({
           success: false,
           error: 'Speech-to-text failed',
+          message: error.message,
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /api/translate/tts
+   * Text-to-speech synthesis using Edge TTS (free).
+   * Returns base64-encoded MP3 audio.
+   */
+  fastify.post(
+    '/tts',
+    {
+      preHandler: [authenticateOptional, checkTranslationRateLimit],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const body = request.body as {
+          text: string;
+          language: string;
+          gender?: 'MALE' | 'FEMALE';
+          rate?: number;
+        };
+
+        if (!body || !body.text) {
+          return reply.code(400).send({
+            success: false,
+            error: 'No text provided. Send { text: "Hello", language: "en" }',
+          });
+        }
+
+        if (body.text.length > 5000) {
+          return reply.code(400).send({
+            success: false,
+            error: 'Text exceeds 5000 characters',
+          });
+        }
+
+        const languageCode = body.language || 'en';
+
+        logger.info('TTS request', {
+          textLength: body.text.length,
+          language: languageCode,
+          gender: body.gender,
+        });
+
+        const result = await ttsService.synthesize({
+          text: body.text,
+          languageCode,
+          gender: body.gender,
+          speakingRate: body.rate,
+        });
+
+        return reply.send({
+          success: true,
+          data: {
+            audioContent: result.audioContent,
+            audioEncoding: result.audioEncoding,
+            durationMs: result.durationMs,
+            voiceUsed: result.voiceUsed,
+            characterCount: result.characterCount,
+          },
+        });
+      } catch (error: any) {
+        logger.error('TTS error', { error: error.message });
+        return reply.code(500).send({
+          success: false,
+          error: 'Text-to-speech failed',
           message: error.message,
         });
       }

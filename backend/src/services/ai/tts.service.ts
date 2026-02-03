@@ -2,14 +2,14 @@
  * =============================================================================
  * Text-to-Speech (TTS) Service
  * =============================================================================
- * Handles conversion of text to audio using AI services.
- * Includes mock implementation for development and testing.
+ * Uses Microsoft Edge TTS (msedge-tts) for free, high-quality neural TTS.
+ * No API key required. Supports 400+ voices across 100+ languages.
  * =============================================================================
  */
 
-import { env } from '../../config/env.js';
+import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { createLogger } from '../../utils/logger.js';
-import { ExternalServiceError, UnsupportedLanguageError } from '../../utils/errors.js';
+import { ExternalServiceError } from '../../utils/errors.js';
 
 const logger = createLogger('tts-service');
 
@@ -75,197 +75,194 @@ export interface Voice {
 }
 
 /**
- * Mock voices database.
+ * Map of language codes to Edge TTS voice names.
+ * Uses high-quality Neural voices for all languages.
  */
-const MOCK_VOICES: Voice[] = [
-  { name: 'en-US-Neural2-A', languageCode: 'en', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'en-US-Neural2-C', languageCode: 'en', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'es-ES-Neural2-A', languageCode: 'es', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'es-ES-Neural2-B', languageCode: 'es', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'fr-FR-Neural2-A', languageCode: 'fr', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'fr-FR-Neural2-C', languageCode: 'fr', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'de-DE-Neural2-B', languageCode: 'de', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'de-DE-Neural2-C', languageCode: 'de', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'it-IT-Neural2-A', languageCode: 'it', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'it-IT-Neural2-B', languageCode: 'it', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'ja-JP-Neural2-B', languageCode: 'ja', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'ja-JP-Neural2-C', languageCode: 'ja', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'ko-KR-Neural2-A', languageCode: 'ko', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'ko-KR-Neural2-B', languageCode: 'ko', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'zh-CN-Neural2-C', languageCode: 'zh', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'zh-CN-Neural2-D', languageCode: 'zh', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'ar-XA-Neural2-A', languageCode: 'ar', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'ar-XA-Neural2-C', languageCode: 'ar', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'ru-RU-Neural2-B', languageCode: 'ru', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'ru-RU-Neural2-C', languageCode: 'ru', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'pt-BR-Neural2-A', languageCode: 'pt', gender: 'MALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-  { name: 'pt-BR-Neural2-C', languageCode: 'pt', gender: 'FEMALE', naturalSampleRateHertz: 24000, supportedFormats: ['MP3', 'LINEAR16', 'OGG_OPUS'] },
-];
+const EDGE_VOICE_MAP: Record<string, { male: string; female: string }> = {
+  en: { male: 'en-US-GuyNeural', female: 'en-US-JennyNeural' },
+  es: { male: 'es-ES-AlvaroNeural', female: 'es-ES-ElviraNeural' },
+  fr: { male: 'fr-FR-HenriNeural', female: 'fr-FR-DeniseNeural' },
+  de: { male: 'de-DE-ConradNeural', female: 'de-DE-KatjaNeural' },
+  it: { male: 'it-IT-DiegoNeural', female: 'it-IT-ElsaNeural' },
+  pt: { male: 'pt-BR-AntonioNeural', female: 'pt-BR-FranciscaNeural' },
+  ru: { male: 'ru-RU-DmitryNeural', female: 'ru-RU-SvetlanaNeural' },
+  ja: { male: 'ja-JP-KeitaNeural', female: 'ja-JP-NanamiNeural' },
+  ko: { male: 'ko-KR-InJoonNeural', female: 'ko-KR-SunHiNeural' },
+  zh: { male: 'zh-CN-YunxiNeural', female: 'zh-CN-XiaoxiaoNeural' },
+  ar: { male: 'ar-SA-HamedNeural', female: 'ar-SA-ZariyahNeural' },
+  tr: { male: 'tr-TR-AhmetNeural', female: 'tr-TR-EmelNeural' },
+  hi: { male: 'hi-IN-MadhurNeural', female: 'hi-IN-SwaraNeural' },
+  nl: { male: 'nl-NL-MaartenNeural', female: 'nl-NL-ColetteNeural' },
+  pl: { male: 'pl-PL-MarekNeural', female: 'pl-PL-ZofiaNeural' },
+  sv: { male: 'sv-SE-MattiasNeural', female: 'sv-SE-SofieNeural' },
+  da: { male: 'da-DK-JeppeNeural', female: 'da-DK-ChristelNeural' },
+  fi: { male: 'fi-FI-HarriNeural', female: 'fi-FI-NooraNeural' },
+  no: { male: 'nb-NO-FinnNeural', female: 'nb-NO-PernilleNeural' },
+  uk: { male: 'uk-UA-OstapNeural', female: 'uk-UA-PolinaNeural' },
+  cs: { male: 'cs-CZ-AntoninNeural', female: 'cs-CZ-VlastaNeural' },
+  el: { male: 'el-GR-NestorasNeural', female: 'el-GR-AthinaNeural' },
+  he: { male: 'he-IL-AvriNeural', female: 'he-IL-HilaNeural' },
+  th: { male: 'th-TH-NiwatNeural', female: 'th-TH-PremwadeeNeural' },
+  vi: { male: 'vi-VN-NamMinhNeural', female: 'vi-VN-HoaiMyNeural' },
+  id: { male: 'id-ID-ArdiNeural', female: 'id-ID-GadisNeural' },
+  ms: { male: 'ms-MY-OsmanNeural', female: 'ms-MY-YasminNeural' },
+  ro: { male: 'ro-RO-EmilNeural', female: 'ro-RO-AlinaNeural' },
+  bg: { male: 'bg-BG-BorislavNeural', female: 'bg-BG-KalinaNeural' },
+  hu: { male: 'hu-HU-TamasNeural', female: 'hu-HU-NoemiNeural' },
+  sk: { male: 'sk-SK-LukasNeural', female: 'sk-SK-ViktoriaNeural' },
+  hr: { male: 'hr-HR-SreckoNeural', female: 'hr-HR-GabrijelaNeural' },
+  fa: { male: 'fa-IR-FaridNeural', female: 'fa-IR-DilaraNeural' },
+  bn: { male: 'bn-IN-BashkarNeural', female: 'bn-IN-TanishaaNeural' },
+  ta: { male: 'ta-IN-ValluvarNeural', female: 'ta-IN-PallaviNeural' },
+  ur: { male: 'ur-PK-AsadNeural', female: 'ur-PK-UzmaNeural' },
+  sw: { male: 'sw-KE-RafikiNeural', female: 'sw-KE-ZuriNeural' },
+  af: { male: 'af-ZA-WillemNeural', female: 'af-ZA-AdriNeural' },
+  ca: { male: 'ca-ES-EnricNeural', female: 'ca-ES-JoanaNeural' },
+  fil: { male: 'fil-PH-AngeloNeural', female: 'fil-PH-BlessicaNeural' },
+};
 
 /**
- * Text-to-Speech service class.
+ * Text-to-Speech service using Microsoft Edge TTS.
+ * Free, no API key required.
  */
 export class TTSService {
-  private useMock: boolean;
-
   constructor() {
-    this.useMock = env.USE_MOCK_AI_SERVICES || !env.GOOGLE_CLOUD_TTS_API_KEY;
-
-    if (this.useMock) {
-      logger.info('TTS service initialized in mock mode');
-    } else {
-      logger.info('TTS service initialized with Google Cloud');
-    }
+    logger.info('TTS service initialized with Microsoft Edge TTS (free)');
   }
 
   /**
-   * Synthesize text to speech.
-   *
-   * @param request - TTS request with text and options
-   * @returns TTS response with audio data
+   * Synthesize text to speech using Edge TTS.
    */
   async synthesize(request: TTSRequest): Promise<TTSResponse> {
     const startTime = Date.now();
 
-    // Validate language
-    if (!this.isLanguageSupported(request.languageCode)) {
-      throw new UnsupportedLanguageError(request.languageCode);
-    }
-
-    // Validate text length
     if (request.text.length > 5000) {
       throw new ExternalServiceError('TTS', 'Text exceeds maximum length of 5000 characters');
     }
 
     try {
-      if (this.useMock) {
-        return await this.mockSynthesize(request);
-      }
+      // Get the voice name for the language
+      const voiceName = this.resolveVoice(request);
 
-      return await this.googleSynthesize(request);
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      logger.externalService('google-tts', 'synthesize', false, duration, {
-        error: (error as Error).message,
+      const tts = new MsEdgeTTS();
+      await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+
+      // Build SSML rate/pitch adjustments
+      const rate = request.speakingRate ? `${Math.round((request.speakingRate - 1) * 100)}%` : '+0%';
+      const pitch = request.pitch ? `${request.pitch > 0 ? '+' : ''}${Math.round(request.pitch)}Hz` : '+0Hz';
+
+      // Collect audio chunks from stream
+      const chunks: Buffer[] = [];
+      const { audioStream } = tts.toStream(request.text, { rate, pitch });
+
+      await new Promise<void>((resolve, reject) => {
+        audioStream.on('data', (chunk: Buffer) => {
+          chunks.push(chunk);
+        });
+        audioStream.on('end', () => resolve());
+        audioStream.on('close', () => resolve());
+        audioStream.on('error', (err: Error) => reject(err));
       });
 
-      if (error instanceof UnsupportedLanguageError) {
-        throw error;
-      }
+      const audioBuffer = Buffer.concat(chunks);
+      const audioContent = audioBuffer.toString('base64');
 
-      throw new ExternalServiceError('Google Text-to-Speech', 'Synthesis failed');
+      // Estimate duration from MP3 bitrate (96kbps = 12000 bytes/sec)
+      const durationMs = Math.floor((audioBuffer.length / 12000) * 1000);
+
+      const duration = Date.now() - startTime;
+      logger.externalService('edge-tts', 'synthesize', true, duration, {
+        languageCode: request.languageCode,
+        characterCount: request.text.length,
+        voice: voiceName,
+        audioSize: audioBuffer.length,
+        durationMs,
+      });
+
+      return {
+        audioContent,
+        audioEncoding: 'MP3',
+        sampleRateHertz: 24000,
+        durationMs,
+        characterCount: request.text.length,
+        voiceUsed: voiceName,
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      logger.externalService('edge-tts', 'synthesize', false, duration, {
+        error: (error as Error).message,
+        languageCode: request.languageCode,
+      });
+
+      throw new ExternalServiceError('Edge TTS', `Synthesis failed: ${(error as Error).message}`);
     }
   }
 
   /**
+   * Resolve the Edge TTS voice name from the request.
+   */
+  private resolveVoice(request: TTSRequest): string {
+    // If explicit voice name provided and it looks like an Edge voice, use it
+    if (request.voiceName && request.voiceName.includes('Neural')) {
+      return request.voiceName;
+    }
+
+    const lang = request.languageCode.toLowerCase().split('-')[0] ?? 'en';
+    const voices = EDGE_VOICE_MAP[lang];
+    const enVoices = EDGE_VOICE_MAP['en']!;
+
+    if (!voices) {
+      // Fallback to English if language not found
+      logger.warn(`No Edge TTS voice for language '${request.languageCode}', falling back to English`);
+      const gender = request.gender || 'FEMALE';
+      return gender === 'MALE' ? enVoices.male : enVoices.female;
+    }
+
+    const gender = request.gender || 'FEMALE';
+    return gender === 'MALE' ? voices.male : voices.female;
+  }
+
+  /**
    * Get available voices for a language.
-   *
-   * @param languageCode - Language code to filter by (optional)
-   * @returns List of available voices
    */
   getVoices(languageCode?: string): Voice[] {
-    if (languageCode) {
-      return MOCK_VOICES.filter(
-        (v) => v.languageCode.toLowerCase() === languageCode.toLowerCase()
-      );
+    const voices: Voice[] = [];
+
+    for (const [lang, v] of Object.entries(EDGE_VOICE_MAP)) {
+      if (languageCode && lang !== languageCode.toLowerCase().split('-')[0]) continue;
+
+      voices.push({
+        name: v.male,
+        languageCode: lang,
+        gender: 'MALE',
+        naturalSampleRateHertz: 24000,
+        supportedFormats: ['MP3'],
+      });
+      voices.push({
+        name: v.female,
+        languageCode: lang,
+        gender: 'FEMALE',
+        naturalSampleRateHertz: 24000,
+        supportedFormats: ['MP3'],
+      });
     }
-    return MOCK_VOICES;
+
+    return voices;
   }
 
   /**
    * Get supported languages for TTS.
    */
   getSupportedLanguages(): string[] {
-    const languages = new Set(MOCK_VOICES.map((v) => v.languageCode));
-    return Array.from(languages);
+    return Object.keys(EDGE_VOICE_MAP);
   }
 
   /**
    * Check if a language is supported.
    */
   isLanguageSupported(languageCode: string): boolean {
-    return this.getSupportedLanguages().includes(languageCode.toLowerCase());
-  }
-
-  /**
-   * Mock synthesis for development.
-   */
-  private async mockSynthesize(request: TTSRequest): Promise<TTSResponse> {
-    // Simulate realistic latency based on text length
-    const baseLatency = 100;
-    const perCharLatency = 2;
-    const latency = baseLatency + (request.text.length * perCharLatency);
-    await this.delay(Math.min(latency, 500)); // Cap at 500ms
-
-    // Calculate mock duration based on text length
-    // Average speaking rate is about 150 words per minute
-    // Average word length is about 5 characters
-    const wordsPerMinute = 150 / (request.speakingRate || 1.0);
-    const estimatedWords = request.text.length / 5;
-    const durationMs = Math.floor((estimatedWords / wordsPerMinute) * 60 * 1000);
-
-    // Find appropriate voice
-    const voices = this.getVoices(request.languageCode);
-    let voice = voices[0];
-
-    if (request.voiceName) {
-      voice = voices.find((v) => v.name === request.voiceName) || voice;
-    } else if (request.gender) {
-      voice = voices.find((v) => v.gender === request.gender) || voice;
-    }
-
-    const audioEncoding = request.audioEncoding || 'MP3';
-    const sampleRate = request.sampleRateHertz || voice?.naturalSampleRateHertz || 24000;
-
-    // Generate mock audio data
-    // In a real implementation, this would be actual audio
-    // For mock, we generate a placeholder that represents the audio size
-    const estimatedBytesPerSecond = sampleRate * 2; // 16-bit audio
-    const estimatedBytes = Math.floor((durationMs / 1000) * estimatedBytesPerSecond);
-
-    // Create a small mock audio placeholder (not real audio, just for testing)
-    const mockAudioBuffer = Buffer.alloc(Math.min(estimatedBytes, 1024));
-    const audioContent = mockAudioBuffer.toString('base64');
-
-    logger.externalService('mock-tts', 'synthesize', true, latency, {
-      languageCode: request.languageCode,
-      characterCount: request.text.length,
-      durationMs,
-      voice: voice?.name,
-    });
-
-    return {
-      audioContent,
-      audioEncoding,
-      sampleRateHertz: sampleRate,
-      durationMs,
-      characterCount: request.text.length,
-      voiceUsed: voice?.name || 'unknown',
-    };
-  }
-
-  /**
-   * Real Google Cloud TTS implementation.
-   * Currently a placeholder - would use @google-cloud/text-to-speech in production.
-   */
-  private async googleSynthesize(request: TTSRequest): Promise<TTSResponse> {
-    logger.warn('Google TTS not fully implemented, using mock');
-
-    logger.debug('Would send to Google TTS', {
-      text: request.text.substring(0, 100),
-      languageCode: request.languageCode,
-      voice: request.voiceName,
-      encoding: request.audioEncoding,
-    });
-
-    return this.mockSynthesize(request);
-  }
-
-  /**
-   * Utility: delay for specified milliseconds.
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    const lang = languageCode.toLowerCase().split('-')[0] ?? '';
+    return lang in EDGE_VOICE_MAP;
   }
 }
 
