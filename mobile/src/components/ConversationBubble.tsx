@@ -55,6 +55,7 @@ interface ConversationBubbleProps {
   speaker: 'A' | 'B';
   isOwnSpeech: boolean;
   isCurrent?: boolean;
+  isLatest?: boolean;
   animateIn?: boolean;
   flag?: string;
 }
@@ -68,6 +69,7 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
   speaker,
   isOwnSpeech,
   isCurrent = false,
+  isLatest = false,
   animateIn = true,
   flag,
 }) => {
@@ -98,12 +100,8 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
   }, [animateIn]);
 
   const bubbleAlignment = isOwnSpeech ? 'flex-end' : 'flex-start';
-  const bubbleBg = isOwnSpeech
-    ? theme.colors.primary + '15'
-    : (speaker === 'A' ? theme.colors.accent + '15' : theme.colors.secondary + '15');
-  const accentColor = isOwnSpeech
-    ? theme.colors.textTertiary
-    : (speaker === 'A' ? theme.colors.accent : theme.colors.secondary);
+  const accentColor = speaker === 'A' ? theme.colors.accent : theme.colors.secondary;
+  const bubbleBg = accentColor + '12';
 
   return (
     <Animated.View
@@ -119,14 +117,13 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
       <View style={[
         styles.bubble,
         { backgroundColor: bubbleBg },
-        isCurrent && styles.currentBubble,
       ]}>
         {/* Main translated text */}
         <Text
           style={[
-            isOwnSpeech ? styles.ownMainText : styles.otherMainText,
+            styles.mainText,
             {
-              color: isOwnSpeech ? theme.colors.textSecondary : theme.colors.text,
+              color: theme.colors.text,
               textAlign: isTranslatedRtl ? 'right' : 'left',
             },
           ]}
@@ -156,30 +153,26 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    maxWidth: '85%',
-    marginVertical: 4,
+    maxWidth: '90%',
+    marginVertical: 3,
   },
   bubble: {
     borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
   },
-  currentBubble: {
-    borderWidth: 1,
-    borderColor: 'rgba(100, 100, 255, 0.15)',
-  },
-  otherMainText: {
-    fontSize: 18,
-    lineHeight: 26,
+  mainText: {
+    fontSize: 16,
+    lineHeight: 24,
     fontWeight: '500',
   },
-  ownMainText: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '400',
-  },
   originalText: {
-    fontSize: 12,
+    fontSize: 11,
     lineHeight: 18,
     marginTop: 6,
     fontStyle: 'italic',

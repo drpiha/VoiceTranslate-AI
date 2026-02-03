@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppSettings, VadSensitivity, TranslationProvider } from '../types';
+import { AppSettings, VadSensitivity, TranslationProvider, ColorScheme, FontSize } from '../types';
 import { useColorScheme } from 'react-native';
 
 interface SettingsState extends AppSettings {
@@ -8,6 +8,8 @@ interface SettingsState extends AppSettings {
   recentLanguages: string[];
 
   setTheme: (theme: 'light' | 'dark' | 'system') => Promise<void>;
+  setColorScheme: (scheme: ColorScheme) => Promise<void>;
+  setFontSize: (size: FontSize) => Promise<void>;
   setSourceLanguage: (language: string) => Promise<void>;
   setTargetLanguage: (language: string) => Promise<void>;
   setAutoPlayTranslation: (enabled: boolean) => Promise<void>;
@@ -16,6 +18,7 @@ interface SettingsState extends AppSettings {
   setVadSensitivity: (sensitivity: VadSensitivity) => Promise<void>;
   setTranslationProvider: (provider: TranslationProvider) => Promise<void>;
   setDeeplApiKey: (key: string) => Promise<void>;
+  setConverseTts: (enabled: boolean) => Promise<void>;
   addRecentLanguage: (language: string) => Promise<void>;
   loadSettings: () => Promise<void>;
   getEffectiveTheme: () => 'light' | 'dark';
@@ -23,6 +26,8 @@ interface SettingsState extends AppSettings {
 
 const defaultSettings: AppSettings = {
   theme: 'system',
+  colorScheme: 'indigo',
+  fontSize: 'medium',
   sourceLanguage: 'auto',
   targetLanguage: 'es',
   autoPlayTranslation: true,
@@ -31,6 +36,7 @@ const defaultSettings: AppSettings = {
   vadSensitivity: 'medium',
   translationProvider: 'backend',
   deeplApiKey: '',
+  converseTts: true,
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -47,11 +53,28 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  setColorScheme: async (scheme) => {
+    try {
+      await AsyncStorage.setItem('colorScheme', scheme);
+      set({ colorScheme: scheme });
+    } catch (error) {
+      console.error('Set color scheme error:', error);
+    }
+  },
+
+  setFontSize: async (size) => {
+    try {
+      await AsyncStorage.setItem('fontSize', size);
+      set({ fontSize: size });
+    } catch (error) {
+      console.error('Set font size error:', error);
+    }
+  },
+
   setSourceLanguage: async (language) => {
     try {
       await AsyncStorage.setItem('sourceLanguage', language);
       set({ sourceLanguage: language });
-      // Track recent languages
       if (language !== 'auto') {
         get().addRecentLanguage(language);
       }
@@ -64,7 +87,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       await AsyncStorage.setItem('targetLanguage', language);
       set({ targetLanguage: language });
-      // Track recent languages
       get().addRecentLanguage(language);
     } catch (error) {
       console.error('Set target language error:', error);
@@ -74,7 +96,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   addRecentLanguage: async (language) => {
     try {
       const { recentLanguages } = get();
-      // Add to front, remove duplicates, keep max 5
       const updated = [language, ...recentLanguages.filter(l => l !== language)].slice(0, 5);
       await AsyncStorage.setItem('recentLanguages', JSON.stringify(updated));
       set({ recentLanguages: updated });
@@ -82,7 +103,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       console.error('Add recent language error:', error);
     }
   },
-  
+
   setAutoPlayTranslation: async (enabled) => {
     try {
       await AsyncStorage.setItem('autoPlayTranslation', JSON.stringify(enabled));
@@ -91,7 +112,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       console.error('Set auto play error:', error);
     }
   },
-  
+
   setSaveHistory: async (enabled) => {
     try {
       await AsyncStorage.setItem('saveHistory', JSON.stringify(enabled));
@@ -100,7 +121,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       console.error('Set save history error:', error);
     }
   },
-  
+
   setHapticFeedback: async (enabled) => {
     try {
       await AsyncStorage.setItem('hapticFeedback', JSON.stringify(enabled));
@@ -137,10 +158,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  setConverseTts: async (enabled) => {
+    try {
+      await AsyncStorage.setItem('converseTts', JSON.stringify(enabled));
+      set({ converseTts: enabled });
+    } catch (error) {
+      console.error('Set converse TTS error:', error);
+    }
+  },
+
   loadSettings: async () => {
     try {
       const settings = await AsyncStorage.multiGet([
         'theme',
+        'colorScheme',
+        'fontSize',
         'sourceLanguage',
         'targetLanguage',
         'autoPlayTranslation',
@@ -149,6 +181,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         'vadSensitivity',
         'translationProvider',
         'deeplApiKey',
+        'converseTts',
         'recentLanguages',
       ]);
 
@@ -156,7 +189,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
       settings.forEach(([key, value]) => {
         if (value) {
-          if (key === 'autoPlayTranslation' || key === 'saveHistory' || key === 'hapticFeedback' || key === 'recentLanguages') {
+          if (key === 'autoPlayTranslation' || key === 'saveHistory' || key === 'hapticFeedback' || key === 'converseTts' || key === 'recentLanguages') {
             (loadedSettings as Record<string, unknown>)[key] = JSON.parse(value);
           } else {
             (loadedSettings as Record<string, unknown>)[key] = value;
@@ -170,12 +203,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ isLoading: false });
     }
   },
-  
+
   getEffectiveTheme: () => {
     const { theme } = get();
     if (theme === 'system') {
-      // This would need to be called from a component context
-      return 'light'; // default
+      return 'light';
     }
     return theme;
   },

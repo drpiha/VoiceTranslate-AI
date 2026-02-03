@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import * as Speech from 'expo-speech';
 import { Ionicons } from '@expo/vector-icons';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -27,7 +28,7 @@ import { useDebouncedSpeaking } from '../../src/hooks/useDebouncedSpeaking';
 
 export default function ConversationScreen() {
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback } = useSettingsStore();
+  const { theme: themePreference, hapticFeedback, converseTts, colorScheme: userColorScheme } = useSettingsStore();
   const {
     personALang,
     personBLang,
@@ -79,7 +80,7 @@ export default function ConversationScreen() {
   useEffect(() => { currentTurnRef.current = currentTurn; }, [currentTurn]);
 
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, userColorScheme);
 
   const personAInfo = getLanguageByCode(personALang);
   const personBInfo = getLanguageByCode(personBLang);
@@ -139,6 +140,19 @@ export default function ConversationScreen() {
         };
         finalizeTurn(finalTurn);
         handleHaptic();
+
+        // TTS for finalized turn (speak the translated text)
+        if (converseTts && finalTurn.translatedText) {
+          try {
+            Speech.stop();
+            Speech.speak(finalTurn.translatedText, {
+              language: targetLang,
+              rate: 0.95,
+            });
+          } catch (e) {
+            console.error('TTS error:', e);
+          }
+        }
 
         // Save to history
         addTranslation({
@@ -265,6 +279,11 @@ export default function ConversationScreen() {
     setConnectionError(null);
   };
 
+  const toggleTts = () => {
+    handleHaptic();
+    useSettingsStore.getState().setConverseTts(!converseTts);
+  };
+
   // Pulse animation for active speak button + badge glow
   useEffect(() => {
     if (isListening && activeSpeaker === 'A') {
@@ -322,6 +341,7 @@ export default function ConversationScreen() {
     return () => {
       audioService.stopRealtimeMode();
       translationService.disconnect();
+      Speech.stop();
     };
   }, []);
 
@@ -330,7 +350,7 @@ export default function ConversationScreen() {
     const allTurns = [...turns, ...(currentTurn ? [currentTurn] : [])];
     if (allTurns.length === 0) return null;
 
-    return allTurns.map((turn) => {
+    return allTurns.map((turn, index) => {
       const isOwnSpeech = turn.speaker === viewer;
       // For the viewer: show other person's translation prominently, own speech small
       const displayTranslated = isOwnSpeech ? turn.originalText : turn.translatedText;
@@ -350,6 +370,7 @@ export default function ConversationScreen() {
           speaker={turn.speaker}
           isOwnSpeech={isOwnSpeech}
           isCurrent={!turn.isFinal}
+          isLatest={index === allTurns.length - 1}
           flag={speakerInfo?.flag}
         />
       );
@@ -440,11 +461,21 @@ export default function ConversationScreen() {
             end={{ x: 1, y: 0 }}
             style={styles.headerIconBg}
           >
-            <Ionicons name="people" size={20} color="#FFF" />
+            <Ionicons name="people" size={16} color="#FFF" />
           </LinearGradient>
           <Text style={[styles.title, { color: theme.colors.text }]}>Conversation</Text>
         </View>
         <View style={styles.headerRight}>
+          <TouchableOpacity onPress={toggleTts} style={[
+            styles.ttsToggle,
+            { backgroundColor: converseTts ? theme.colors.accent + '15' : 'transparent' }
+          ]}>
+            <Ionicons
+              name={converseTts ? 'volume-high' : 'volume-mute-outline'}
+              size={20}
+              color={converseTts ? theme.colors.accent : theme.colors.textTertiary}
+            />
+          </TouchableOpacity>
           {turns.length > 0 && (
             <TouchableOpacity onPress={handleClear} style={styles.clearBtn}>
               <Ionicons name="trash-outline" size={20} color={theme.colors.textTertiary} />
@@ -474,7 +505,7 @@ export default function ConversationScreen() {
           >
             {turns.length === 0 && !currentTurn ? (
               <View style={styles.emptyState}>
-                <Ionicons name="chatbubbles-outline" size={32} color={theme.colors.textTertiary} />
+                <Ionicons name="chatbubbles-outline" size={24} color={theme.colors.textTertiary} />
                 <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
                   Tap the button to start speaking
                 </Text>
@@ -535,7 +566,7 @@ export default function ConversationScreen() {
               end={{ x: 1, y: 0 }}
               style={styles.swapButtonGradient}
             >
-              <Ionicons name="swap-horizontal" size={16} color="#FFF" />
+              <Ionicons name="swap-horizontal" size={14} color="#FFF" />
             </LinearGradient>
           </Animated.View>
         </TouchableOpacity>
@@ -576,7 +607,7 @@ export default function ConversationScreen() {
         >
           {turns.length === 0 && !currentTurn ? (
             <View style={styles.emptyState}>
-              <Ionicons name="chatbubbles-outline" size={32} color={theme.colors.textTertiary} />
+              <Ionicons name="chatbubbles-outline" size={24} color={theme.colors.textTertiary} />
               <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
                 Tap the button to start speaking
               </Text>
@@ -606,8 +637,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -615,9 +646,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   headerIconBg: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -627,12 +658,16 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   title: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     letterSpacing: -0.5,
   },
   clearBtn: {
     padding: 6,
+  },
+  ttsToggle: {
+    padding: 6,
+    borderRadius: 8,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -654,7 +689,7 @@ const styles = StyleSheet.create({
   },
   personSection: {
     flex: 1,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
   },
   personASection: {
     transform: [{ rotate: '180deg' }],
@@ -666,8 +701,8 @@ const styles = StyleSheet.create({
   personBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
     borderRadius: 10,
     gap: 4,
   },
@@ -682,11 +717,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginHorizontal: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 14,
-    marginVertical: 4,
+    marginHorizontal: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginVertical: 2,
   },
   langBarSide: {
     flex: 1,
@@ -701,9 +736,9 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
   },
   swapButtonGradient: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -712,35 +747,35 @@ const styles = StyleSheet.create({
   },
   bubblesContent: {
     flexGrow: 1,
-    paddingVertical: 8,
+    paddingVertical: 4,
   },
   emptyState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 30,
-    gap: 10,
+    paddingVertical: 16,
+    gap: 6,
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: 13,
     textAlign: 'center',
   },
   speakButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 24,
-    gap: 8,
-    marginVertical: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    gap: 6,
+    marginVertical: 2,
   },
   speakButtonDisabled: {
     opacity: 0.4,
   },
   speakButtonText: {
     color: '#FFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   waveformContainer: {
