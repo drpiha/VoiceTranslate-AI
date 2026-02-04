@@ -9,7 +9,7 @@ import {
   ViewToken,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useColorScheme } from 'react-native';
 import { createTheme, spacing } from '../../src/constants/theme';
@@ -50,9 +50,9 @@ export default function OnboardingScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const colorScheme = useColorScheme();
-  const { theme: themePreference } = useSettingsStore();
+  const { theme: themePreference, colorScheme: colorSchemePref } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   const handleNext = () => {
     if (currentIndex < pages.length - 1) {
@@ -130,16 +130,11 @@ export default function OnboardingScreen() {
         </View>
 
         <TouchableOpacity onPress={handleNext} style={styles.buttonContainer}>
-          <LinearGradient
-            colors={[theme.colors.gradient1, theme.colors.gradient2]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.button}
-          >
+          <View style={[styles.button, { backgroundColor: theme.colors.primary }]}>
             <Text style={styles.buttonText}>
               {currentIndex === pages.length - 1 ? 'Get Started' : 'Next'}
             </Text>
-          </LinearGradient>
+          </View>
         </TouchableOpacity>
       </View>
     </View>

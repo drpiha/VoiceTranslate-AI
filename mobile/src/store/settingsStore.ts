@@ -19,6 +19,7 @@ interface SettingsState extends AppSettings {
   setTranslationProvider: (provider: TranslationProvider) => Promise<void>;
   setDeeplApiKey: (key: string) => Promise<void>;
   setConverseTts: (enabled: boolean) => Promise<void>;
+  setFaceToFaceMode: (enabled: boolean) => Promise<void>;
   addRecentLanguage: (language: string) => Promise<void>;
   loadSettings: () => Promise<void>;
   getEffectiveTheme: () => 'light' | 'dark';
@@ -26,7 +27,7 @@ interface SettingsState extends AppSettings {
 
 const defaultSettings: AppSettings = {
   theme: 'system',
-  colorScheme: 'indigo',
+  colorScheme: 'emerald',
   fontSize: 'medium',
   sourceLanguage: 'auto',
   targetLanguage: 'es',
@@ -37,6 +38,7 @@ const defaultSettings: AppSettings = {
   translationProvider: 'backend',
   deeplApiKey: '',
   converseTts: true,
+  faceToFaceMode: true,
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -167,6 +169,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  setFaceToFaceMode: async (enabled) => {
+    try {
+      await AsyncStorage.setItem('faceToFaceMode', JSON.stringify(enabled));
+      set({ faceToFaceMode: enabled });
+    } catch (error) {
+      console.error('Set face to face mode error:', error);
+    }
+  },
+
   loadSettings: async () => {
     try {
       const settings = await AsyncStorage.multiGet([
@@ -182,6 +193,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         'translationProvider',
         'deeplApiKey',
         'converseTts',
+        'faceToFaceMode',
         'recentLanguages',
       ]);
 
@@ -189,7 +201,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
       settings.forEach(([key, value]) => {
         if (value) {
-          if (key === 'autoPlayTranslation' || key === 'saveHistory' || key === 'hapticFeedback' || key === 'converseTts' || key === 'recentLanguages') {
+          if (key === 'autoPlayTranslation' || key === 'saveHistory' || key === 'hapticFeedback' || key === 'converseTts' || key === 'faceToFaceMode' || key === 'recentLanguages') {
             (loadedSettings as Record<string, unknown>)[key] = JSON.parse(value);
           } else {
             (loadedSettings as Record<string, unknown>)[key] = value;

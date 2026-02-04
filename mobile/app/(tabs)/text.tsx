@@ -12,10 +12,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   Animated as RNAnimated,
+  PanResponder,
+  Dimensions,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 
@@ -34,6 +35,7 @@ import Animated, {
   withSpring,
   withSequence,
   FadeInDown,
+  FadeIn,
 } from 'react-native-reanimated';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -44,12 +46,13 @@ import { LanguageSelector } from '../../src/components/LanguageSelector';
 import { translationService } from '../../src/services/translationService';
 import { audioService } from '../../src/services/audioService';
 import { getLanguageByCode } from '../../src/constants/languages';
+import { useNavigationStore } from '../../src/store/navigationStore';
 
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
 
 export default function TextScreen() {
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback, saveHistory } = useSettingsStore();
+  const { theme: themePreference, hapticFeedback, saveHistory, colorScheme: colorSchemePref } = useSettingsStore();
   const { user } = useUserStore();
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -75,11 +78,113 @@ export default function TextScreen() {
   const { addTranslation } = useHistoryStore();
 
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   // Animation values
   const swapRotation = useSharedValue(0);
   const translateButtonScale = useSharedValue(1);
+
+  // Drag-to-resize text input
+  const MIN_INPUT_HEIGHT = 100;
+  const MAX_INPUT_HEIGHT = 350;
+  const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
+  const dragStartHeight = useRef(MIN_INPUT_HEIGHT);
+
+  const dragPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 5,
+      onPanResponderGrant: () => {
+        dragStartHeight.current = inputHeight;
+        if (hapticFeedback) {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      },
+      onPanResponderMove: (_, gestureState) => {
+        const newHeight = Math.max(
+          MIN_INPUT_HEIGHT,
+          Math.min(MAX_INPUT_HEIGHT, dragStartHeight.current + gestureState.dy)
+        );
+        setInputHeight(newHeight);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        // Snap to nearest 50px increment
+        const rawHeight = Math.max(
+          MIN_INPUT_HEIGHT,
+          Math.min(MAX_INPUT_HEIGHT, dragStartHeight.current + gestureState.dy)
+        );
+        const snapped = Math.round(rawHeight / 50) * 50;
+        setInputHeight(Math.max(MIN_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, snapped)));
+        if (hapticFeedback) {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      },
+    })
+  ).current;
+
+  // Auto-translate debounce
+  const autoTranslateTimer = useRef<NodeJS.Timeout | null>(null);
+  const lastTranslatedText = useRef('');
+
+  useEffect(() => {
+    if (!sourceText.trim() || sourceText.trim().length < 2) {
+      if (autoTranslateTimer.current) {
+        clearTimeout(autoTranslateTimer.current);
+        autoTranslateTimer.current = null;
+      }
+      return;
+    }
+
+    // Skip if we already translated this exact text
+    if (sourceText.trim() === lastTranslatedText.current) return;
+
+    if (autoTranslateTimer.current) {
+      clearTimeout(autoTranslateTimer.current);
+    }
+
+    autoTranslateTimer.current = setTimeout(() => {
+      lastTranslatedText.current = sourceText.trim();
+      handleAutoTranslate();
+    }, 400);
+
+    return () => {
+      if (autoTranslateTimer.current) {
+        clearTimeout(autoTranslateTimer.current);
+      }
+    };
+  }, [sourceText, sourceLanguage, targetLanguage]);
+
+  const handleAutoTranslate = async () => {
+    if (!sourceText.trim() || sourceText.trim().length < 2) return;
+
+    setProcessing(true);
+    setError(null);
+
+    try {
+      const result = await translationService.translate(
+        sourceText,
+        sourceLanguage,
+        targetLanguage
+      );
+
+      setTranslatedText(result.translatedText);
+      setIsDemoMode(!translationService.isUsingBackend());
+
+      if (saveHistory) {
+        await addTranslation({
+          sourceLanguage,
+          targetLanguage,
+          sourceText,
+          translatedText: result.translatedText,
+          isFavorite: false,
+        });
+      }
+    } catch (error: any) {
+      console.error('Auto-translate error:', error);
+    } finally {
+      setProcessing(false);
+    }
+  };
 
   // Recording animation
   useEffect(() => {
@@ -254,35 +359,8 @@ export default function TextScreen() {
   const sourceLang = getLanguageByCode(sourceLanguage);
   const targetLang = getLanguageByCode(targetLanguage);
 
-  const bgGradientColors = isDark
-    ? ['#0F0F1A', '#1A1A2E', '#16162A'] as const
-    : ['#F8FAFC', '#EEF2FF', '#E0E7FF'] as const;
-
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={bgGradientColors}
-        style={StyleSheet.absoluteFill}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      />
-
-      <View style={styles.orbContainer}>
-        <LinearGradient
-          colors={isDark
-            ? ['rgba(99, 102, 241, 0.15)', 'transparent']
-            : ['rgba(99, 102, 241, 0.1)', 'transparent']
-          }
-          style={[styles.orb, styles.orb1]}
-        />
-        <LinearGradient
-          colors={isDark
-            ? ['rgba(236, 72, 153, 0.12)', 'transparent']
-            : ['rgba(236, 72, 153, 0.08)', 'transparent']
-          }
-          style={[styles.orb, styles.orb2]}
-        />
-      </View>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
 
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
@@ -295,11 +373,16 @@ export default function TextScreen() {
           >
             {/* Header */}
             <View style={styles.header}>
-              <View>
-                <Text style={[styles.title, { color: theme.colors.text }]}>Text</Text>
-                <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
-                  Type or speak, translate instantly
-                </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <TouchableOpacity onPress={useNavigationStore.getState().openDrawer} style={{ padding: 4 }}>
+                  <Ionicons name="menu" size={22} color={theme.colors.text} />
+                </TouchableOpacity>
+                <View>
+                  <Text style={[styles.title, { color: theme.colors.text }]}>Text</Text>
+                  <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+                    Type or speak, translate instantly
+                  </Text>
+                </View>
               </View>
               <View style={styles.headerRight}>
                 <View style={[
@@ -311,11 +394,11 @@ export default function TextScreen() {
                 ]}>
                   <View style={[
                     styles.connectionDot,
-                    { backgroundColor: isBackendConnected ? '#22C55E' : '#EF4444' }
+                    { backgroundColor: isBackendConnected ? theme.colors.success : theme.colors.error }
                   ]} />
                   <Text style={[
                     styles.connectionText,
-                    { color: isBackendConnected ? '#22C55E' : '#EF4444' }
+                    { color: isBackendConnected ? theme.colors.success : theme.colors.error }
                   ]}>
                     {isBackendConnected ? 'Online' : 'Offline'}
                   </Text>
@@ -326,11 +409,8 @@ export default function TextScreen() {
             {/* Language Selection Card */}
             <View style={[
               styles.languageContainer,
-              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.9)' }
+              { backgroundColor: theme.colors.card }
             ]}>
-              {Platform.OS === 'ios' && BlurView && (
-                <BlurView intensity={isDark ? 20 : 40} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-              )}
               <View style={styles.languageContent}>
                 <View style={styles.languageRow}>
                   <View style={styles.languageSelectorWrapper}>
@@ -348,16 +428,11 @@ export default function TextScreen() {
                     disabled={sourceLanguage === 'auto'}
                     style={[styles.swapButton]}
                   >
-                    <LinearGradient
-                      colors={['#6366F1', '#8B5CF6']}
-                      style={styles.swapButtonGradient}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                    >
+                    <View style={[styles.swapButtonGradient, { backgroundColor: theme.colors.primary }]}>
                       <Animated.View style={swapAnimatedStyle}>
                         <Ionicons name="swap-horizontal" size={22} color="#FFFFFF" />
                       </Animated.View>
-                    </LinearGradient>
+                    </View>
                   </AnimatedTouchable>
 
                   <View style={styles.languageSelectorWrapper}>
@@ -377,7 +452,11 @@ export default function TextScreen() {
             {/* Source Text Input Card */}
             <View style={[
               styles.textCard,
-              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
+              {
+                backgroundColor: theme.colors.card,
+                borderWidth: 1,
+                borderColor: theme.colors.primary + (isDark ? '15' : '0F'),
+              }
             ]}>
               <View style={styles.cardHeader}>
                 <View style={styles.cardHeaderLeft}>
@@ -386,21 +465,41 @@ export default function TextScreen() {
                     {sourceLang?.name || 'Auto Detect'}
                   </Text>
                 </View>
-                {sourceText.length > 0 && (
-                  <TouchableOpacity onPress={handleClearAll} style={styles.clearButton}>
-                    <Ionicons name="close-circle" size={22} color={theme.colors.textSecondary} />
-                  </TouchableOpacity>
-                )}
+                <View style={styles.cardHeaderRight}>
+                  {isProcessing && (
+                    <View style={styles.autoTranslateIndicator}>
+                      <ActivityIndicator size="small" color={theme.colors.primary} />
+                      <Text style={[styles.autoTranslateText, { color: theme.colors.primary }]}>
+                        Translating...
+                      </Text>
+                    </View>
+                  )}
+                  {sourceText.length > 0 && (
+                    <TouchableOpacity onPress={handleClearAll} style={styles.clearButton}>
+                      <Ionicons name="close-circle" size={22} color={theme.colors.textSecondary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
               <TextInput
-                style={[styles.textInput, { color: theme.colors.text }]}
-                placeholder="Enter text to translate..."
+                style={[styles.textInput, { color: theme.colors.text, height: inputHeight }]}
+                placeholder="Type to translate instantly..."
                 placeholderTextColor={theme.colors.textTertiary}
                 value={sourceText}
                 onChangeText={setSourceText}
                 multiline
                 textAlignVertical="top"
               />
+              {/* Drag handle to resize */}
+              <View
+                {...dragPanResponder.panHandlers}
+                style={styles.dragHandleContainer}
+              >
+                <View style={[
+                  styles.dragHandle,
+                  { backgroundColor: isDark ? 'rgba(148, 163, 184, 0.4)' : 'rgba(71, 85, 105, 0.25)' }
+                ]} />
+              </View>
               <View style={styles.cardFooter}>
                 <Text style={[styles.charCount, { color: theme.colors.textTertiary }]}>
                   {sourceText.length} / 5000
@@ -420,15 +519,15 @@ export default function TextScreen() {
                     styles.micButton,
                     {
                       backgroundColor: isRecording
-                        ? '#EF4444'
-                        : isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.15)',
+                        ? theme.colors.error
+                        : theme.colors.primary + (isDark ? '33' : '1F'),
                       transform: [{ scale: pulseAnim }],
                     },
                   ]}
                 >
                   <Ionicons
                     name={isRecording ? 'stop' : 'mic'}
-                    size={26}
+                    size={24}
                     color={isRecording ? '#FFFFFF' : theme.colors.primary}
                   />
                   {isRecording && (
@@ -445,15 +544,15 @@ export default function TextScreen() {
                 style={[styles.translateButtonWrapper, translateButtonAnimatedStyle]}
                 activeOpacity={0.9}
               >
-                <LinearGradient
-                  colors={
-                    (!sourceText.trim() || isProcessing)
-                      ? ['#94A3B8', '#64748B']
-                      : ['#6366F1', '#EC4899']
-                  }
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.translateButton}
+                <View
+                  style={[
+                    styles.translateButton,
+                    {
+                      backgroundColor: (!sourceText.trim() || isProcessing)
+                        ? (isDark ? '#4B5563' : '#94A3B8')
+                        : theme.colors.primary
+                    }
+                  ]}
                 >
                   {isProcessing ? (
                     <ActivityIndicator color="#FFFFFF" size="small" />
@@ -463,27 +562,24 @@ export default function TextScreen() {
                       <Text style={styles.translateButtonText}>Translate</Text>
                     </>
                   )}
-                </LinearGradient>
+                </View>
               </AnimatedTouchable>
             </View>
 
             {/* Translation Result Card */}
             {translatedText.length > 0 && (
-              <View style={[
-                styles.textCard,
-                styles.resultCard,
-                {
-                  backgroundColor: isDark ? 'rgba(26, 26, 46, 0.9)' : 'rgba(255, 255, 255, 0.98)',
-                  borderColor: isDark ? 'rgba(99, 102, 241, 0.4)' : 'rgba(99, 102, 241, 0.3)',
-                }
-              ]}>
-                <LinearGradient
-                  colors={isDark
-                    ? ['rgba(99, 102, 241, 0.1)', 'transparent']
-                    : ['rgba(99, 102, 241, 0.05)', 'transparent']
+              <Animated.View
+                entering={FadeInDown.duration(300).springify()}
+                style={[
+                  styles.textCard,
+                  styles.resultCard,
+                  {
+                    backgroundColor: theme.colors.card,
+                    borderTopWidth: 2,
+                    borderTopColor: theme.colors.primary + '30',
                   }
-                  style={styles.resultGradient}
-                />
+                ]}
+              >
                 <View style={styles.cardHeader}>
                   <View style={styles.cardHeaderLeft}>
                     <Text style={styles.flagEmoji}>{targetLang?.flag || '🌐'}</Text>
@@ -491,28 +587,35 @@ export default function TextScreen() {
                       {targetLang?.name || 'Unknown'}
                     </Text>
                   </View>
-                  <TouchableOpacity onPress={handleCopyTranslation} style={styles.copyButton}>
-                    <Ionicons name="copy-outline" size={22} color={theme.colors.primary} />
+                  <TouchableOpacity
+                    onPress={handleCopyTranslation}
+                    style={[styles.copyButton, {
+                      backgroundColor: theme.colors.primary + (isDark ? '26' : '1A'),
+                    }]}
+                  >
+                    <Ionicons name="copy-outline" size={18} color={theme.colors.primary} />
                   </TouchableOpacity>
                 </View>
-                <Text style={[styles.translatedText, { color: theme.colors.text }]}>
+                <Text style={[styles.translatedText, { color: theme.colors.text }]}
+                  selectable
+                >
                   {translatedText}
                 </Text>
-              </View>
+              </Animated.View>
             )}
 
             {/* Quick Tips - Collapsible */}
             {!sourceText && !translatedText && (
               <View style={[
                 styles.tipsContainer,
-                { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.6)' : 'rgba(255, 255, 255, 0.8)' }
+                { backgroundColor: theme.colors.card + (isDark ? 'CC' : 'F0') }
               ]}>
                 <TouchableOpacity
                   onPress={() => setTipsExpanded(!tipsExpanded)}
                   style={styles.tipsHeader}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="bulb" size={18} color="#F59E0B" />
+                  <Ionicons name="bulb" size={18} color={theme.colors.warning} />
                   <Text style={[styles.tipsTitle, { color: theme.colors.text }]}>Quick Tips</Text>
                   <View style={{ flex: 1 }} />
                   <Ionicons
@@ -524,7 +627,7 @@ export default function TextScreen() {
                 {tipsExpanded && (
                   <Animated.View entering={FadeInDown.duration(200)}>
                     <View style={styles.tipItem}>
-                      <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.1)' }]}>
+                      <View style={[styles.tipIconContainer, { backgroundColor: theme.colors.primary + '1A' }]}>
                         <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
                       </View>
                       <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
@@ -532,16 +635,16 @@ export default function TextScreen() {
                       </Text>
                     </View>
                     <View style={styles.tipItem}>
-                      <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(236, 72, 153, 0.1)' }]}>
-                        <Ionicons name="swap-horizontal" size={18} color="#EC4899" />
+                      <View style={[styles.tipIconContainer, { backgroundColor: theme.colors.accent + '1A' }]}>
+                        <Ionicons name="swap-horizontal" size={18} color={theme.colors.accent} />
                       </View>
                       <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
                         Tap the swap button to switch languages
                       </Text>
                     </View>
                     <View style={styles.tipItem}>
-                      <View style={[styles.tipIconContainer, { backgroundColor: 'rgba(34, 197, 94, 0.1)' }]}>
-                        <Ionicons name="mic" size={18} color="#22C55E" />
+                      <View style={[styles.tipIconContainer, { backgroundColor: theme.colors.success + '1A' }]}>
+                        <Ionicons name="mic" size={18} color={theme.colors.success} />
                       </View>
                       <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
                         Use voice input for hands-free translation
@@ -565,26 +668,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
-  orbContainer: {
-    ...StyleSheet.absoluteFillObject,
-    overflow: 'hidden',
-  },
-  orb: {
-    position: 'absolute',
-    borderRadius: 999,
-  },
-  orb1: {
-    width: 300,
-    height: 300,
-    top: -100,
-    right: -100,
-  },
-  orb2: {
-    width: 250,
-    height: 250,
-    bottom: 100,
-    left: -80,
-  },
   keyboardView: {
     flex: 1,
   },
@@ -604,8 +687,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   title: {
-    fontSize: 32,
-    fontWeight: '800',
+    fontSize: 28,
+    fontWeight: '700',
     letterSpacing: -0.5,
   },
   subtitle: {
@@ -661,7 +744,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#6366F1',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -679,15 +762,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   resultCard: {
-    borderWidth: 1.5,
     overflow: 'hidden',
-  },
-  resultGradient: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 80,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -699,8 +774,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  cardHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  autoTranslateIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  autoTranslateText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
   flagEmoji: {
-    fontSize: 24,
+    fontSize: 22,
     marginRight: 10,
   },
   languageName: {
@@ -715,11 +804,22 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     minHeight: 100,
   },
+  dragHandleContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  dragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+  },
   cardFooter: {
-    marginTop: 8,
+    marginTop: 4,
   },
   charCount: {
-    fontSize: 12,
+    fontSize: 11,
     textAlign: 'right',
   },
   buttonRow: {
@@ -729,16 +829,16 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   micButton: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
   },
   recordingTime: {
     fontSize: 10,
@@ -753,14 +853,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 18,
-    borderRadius: 16,
+    paddingVertical: 16,
+    borderRadius: 14,
     gap: 10,
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 6,
   },
   translateButtonText: {
     color: '#FFFFFF',
@@ -774,7 +874,7 @@ const styles = StyleSheet.create({
   },
   copyButton: {
     padding: 8,
-    borderRadius: 8,
+    borderRadius: 10,
   },
   tipsContainer: {
     borderRadius: 16,

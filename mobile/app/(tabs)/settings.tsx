@@ -14,36 +14,43 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { createTheme } from '../../src/constants/theme';
+import { createTheme, colorSchemeNames, colorSchemeIcons } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useUserStore } from '../../src/store/userStore';
 import { useHistoryStore } from '../../src/store/historyStore';
+import { ColorScheme, FontSize } from '../../src/types';
 import * as Haptics from 'expo-haptics';
+import { useNavigationStore } from '../../src/store/navigationStore';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
   const {
     theme: themePreference,
+    colorScheme: currentColorScheme,
+    fontSize: currentFontSize,
     autoPlayTranslation,
     saveHistory,
     hapticFeedback,
     translationProvider,
     deeplApiKey,
+    converseTts,
     setTheme,
+    setColorScheme,
+    setFontSize,
     setAutoPlayTranslation,
     setSaveHistory,
     setHapticFeedback,
     setTranslationProvider,
     setDeeplApiKey,
+    setConverseTts,
   } = useSettingsStore();
   const { user, logout } = useUserStore();
   const { clearHistory } = useHistoryStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, currentColorScheme);
   const [showDeeplKey, setShowDeeplKey] = useState(false);
 
   const handleLogout = () => {
@@ -94,37 +101,8 @@ export default function SettingsScreen() {
     }
   };
 
-  const bgGradientColors = isDark
-    ? ['#0F0F1A', '#1A1A2E', '#16162A'] as const
-    : ['#F8FAFC', '#EEF2FF', '#E0E7FF'] as const;
-
   return (
-    <View style={styles.container}>
-      {/* Background gradient */}
-      <LinearGradient
-        colors={bgGradientColors}
-        style={StyleSheet.absoluteFill}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      />
-
-      {/* Decorative orbs */}
-      <View style={styles.orbContainer}>
-        <LinearGradient
-          colors={isDark
-            ? ['rgba(99, 102, 241, 0.12)', 'transparent']
-            : ['rgba(99, 102, 241, 0.08)', 'transparent']
-          }
-          style={[styles.orb, styles.orb1]}
-        />
-        <LinearGradient
-          colors={isDark
-            ? ['rgba(236, 72, 153, 0.1)', 'transparent']
-            : ['rgba(236, 72, 153, 0.06)', 'transparent']
-          }
-          style={[styles.orb, styles.orb2]}
-        />
-      </View>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
 
       <SafeAreaView style={styles.safeArea}>
         <ScrollView
@@ -133,7 +111,12 @@ export default function SettingsScreen() {
         >
           {/* Header */}
           <View style={styles.header}>
-            <Text style={[styles.title, { color: theme.colors.text }]}>Settings</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <TouchableOpacity onPress={useNavigationStore.getState().openDrawer} style={{ padding: 4 }}>
+                <Ionicons name="menu" size={22} color={theme.colors.text} />
+              </TouchableOpacity>
+              <Text style={[styles.title, { color: theme.colors.text }]}>Settings</Text>
+            </View>
             <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
               Customize your experience
             </Text>
@@ -141,23 +124,20 @@ export default function SettingsScreen() {
 
           {/* User Card */}
           {user ? (
-            <Animated.View entering={FadeInDown.delay(100).springify()}>
+            <Animated.View entering={FadeInDown.delay(50).springify()}>
               <View style={[
                 styles.userCard,
-                { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
+                { backgroundColor: theme.colors.card }
               ]}>
                 <View style={styles.userHeader}>
                   {user.profilePicture ? (
                     <Image source={{ uri: user.profilePicture }} style={styles.profilePicture} />
                   ) : (
-                    <LinearGradient
-                      colors={['#6366F1', '#8B5CF6']}
-                      style={styles.profilePlaceholder}
-                    >
+                    <View style={[styles.profilePlaceholder, { backgroundColor: theme.colors.primary }]}>
                       <Text style={styles.profileInitial}>
                         {user.name?.charAt(0)?.toUpperCase() || '?'}
                       </Text>
-                    </LinearGradient>
+                    </View>
                   )}
                   <View style={styles.userInfo}>
                     <Text style={[styles.userName, { color: theme.colors.text }]}>
@@ -170,8 +150,8 @@ export default function SettingsScreen() {
                       styles.tierBadge,
                       {
                         backgroundColor: user.subscriptionTier === 'premium'
-                          ? 'rgba(99, 102, 241, 0.15)'
-                          : isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'
+                          ? theme.colors.primary + '26'
+                          : (theme.colors.surface + (isDark ? '1A' : '0D'))
                       }
                     ]}>
                       <Ionicons
@@ -189,12 +169,7 @@ export default function SettingsScreen() {
                   </View>
                 </View>
                 <TouchableOpacity onPress={handleSubscription} style={styles.upgradeButtonContainer}>
-                  <LinearGradient
-                    colors={['#6366F1', '#EC4899']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.upgradeButton}
-                  >
+                  <View style={[styles.upgradeButton, { backgroundColor: theme.colors.primary }]}>
                     <Ionicons
                       name={user.subscriptionTier === 'premium' ? 'settings-outline' : 'arrow-up-circle'}
                       size={18}
@@ -203,26 +178,23 @@ export default function SettingsScreen() {
                     <Text style={styles.upgradeButtonText}>
                       {user.subscriptionTier === 'premium' ? 'Manage Plan' : 'Upgrade to Premium'}
                     </Text>
-                  </LinearGradient>
+                  </View>
                 </TouchableOpacity>
               </View>
             </Animated.View>
           ) : (
-            <Animated.View entering={FadeInDown.delay(100).springify()}>
+            <Animated.View entering={FadeInDown.delay(50).springify()}>
               <TouchableOpacity
                 style={[
                   styles.guestCard,
-                  { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
+                  { backgroundColor: theme.colors.card }
                 ]}
                 onPress={() => router.push('/(auth)/login')}
                 activeOpacity={0.8}
               >
-                <LinearGradient
-                  colors={['#6366F1', '#8B5CF6']}
-                  style={styles.guestIconContainer}
-                >
+                <View style={[styles.guestIconContainer, { backgroundColor: theme.colors.primary }]}>
                   <Ionicons name="person" size={24} color="#FFFFFF" />
-                </LinearGradient>
+                </View>
                 <View style={styles.guestInfo}>
                   <Text style={[styles.guestTitle, { color: theme.colors.text }]}>Guest Mode</Text>
                   <Text style={[styles.guestSubtitle, { color: theme.colors.textSecondary }]}>
@@ -235,16 +207,16 @@ export default function SettingsScreen() {
           )}
 
           {/* Appearance Section */}
-          <Animated.View entering={FadeInDown.delay(200).springify()}>
+          <Animated.View entering={FadeInDown.delay(100).springify()}>
             <View style={[
               styles.section,
-              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
+              { backgroundColor: theme.colors.card }
             ]}>
               <Text style={[styles.sectionTitle, { color: theme.colors.textTertiary }]}>
                 APPEARANCE
               </Text>
-              <TouchableOpacity style={styles.row} onPress={cycleTheme} activeOpacity={0.7}>
-                <View style={[styles.iconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.15)' }]}>
+              <TouchableOpacity style={[styles.row, styles.rowBorder, { borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} onPress={cycleTheme} activeOpacity={0.7}>
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.primary + '26' }]}>
                   <Ionicons name={getThemeIcon()} size={20} color={theme.colors.primary} />
                 </View>
                 <View style={styles.rowTextContainer}>
@@ -257,21 +229,120 @@ export default function SettingsScreen() {
                   <Ionicons name="chevron-forward" size={18} color={theme.colors.textTertiary} />
                 </View>
               </TouchableOpacity>
+              <View style={styles.row}>
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.accent + '26' }]}>
+                  <Ionicons name="color-palette" size={20} color={theme.colors.accent} />
+                </View>
+                <View style={[styles.rowTextContainer, { marginBottom: 8 }]}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Color Theme</Text>
+                </View>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.colorSchemeScroll} contentContainerStyle={styles.colorSchemeContent}>
+                {(Object.keys(colorSchemeNames) as ColorScheme[]).map((scheme) => {
+                  const isActive = currentColorScheme === scheme;
+                  const schemePalette = createTheme(isDark, scheme).colors;
+                  return (
+                    <TouchableOpacity
+                      key={scheme}
+                      style={styles.colorChipContainer}
+                      onPress={() => {
+                        if (hapticFeedback) {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }
+                        setColorScheme(scheme);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[
+                        styles.colorChip,
+                        { backgroundColor: schemePalette.primary },
+                        isActive && { borderWidth: 3, borderColor: theme.colors.text }
+                      ]}>
+                        {isActive && (
+                          <View style={styles.checkmarkBg}>
+                            <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                          </View>
+                        )}
+                      </View>
+                      <Text style={[
+                        styles.colorChipLabel,
+                        { color: isActive ? theme.colors.text : theme.colors.textSecondary },
+                        isActive && { fontWeight: '700' }
+                      ]}>
+                        {colorSchemeNames[scheme]}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+              {/* Font Size Picker */}
+              <View style={[styles.row, styles.rowBorder, { borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', marginTop: 4 }]}>
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.warning + '26' }]}>
+                  <Ionicons name="text" size={20} color={theme.colors.warning} />
+                </View>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Font Size</Text>
+                </View>
+              </View>
+              <View style={styles.fontSizeRow}>
+                {([
+                  { key: 'small' as FontSize, label: 'Small', previewSize: 14 },
+                  { key: 'medium' as FontSize, label: 'Medium', previewSize: 18 },
+                  { key: 'large' as FontSize, label: 'Large', previewSize: 22 },
+                ]).map(({ key, label, previewSize }) => {
+                  const isActive = currentFontSize === key;
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      style={[
+                        styles.fontSizeButton,
+                        {
+                          backgroundColor: isActive
+                            ? theme.colors.primary + '20'
+                            : isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                          borderColor: isActive ? theme.colors.primary : 'transparent',
+                        },
+                      ]}
+                      onPress={() => {
+                        if (hapticFeedback) {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }
+                        setFontSize(key);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[
+                        styles.fontSizePreview,
+                        { fontSize: previewSize, color: isActive ? theme.colors.primary : theme.colors.text },
+                      ]}>
+                        Aa
+                      </Text>
+                      <Text style={[
+                        styles.fontSizeLabel,
+                        { color: isActive ? theme.colors.primary : theme.colors.textSecondary },
+                        isActive && { fontWeight: '700' },
+                      ]}>
+                        {label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
           </Animated.View>
 
           {/* Translation Section */}
-          <Animated.View entering={FadeInDown.delay(300).springify()}>
+          <Animated.View entering={FadeInDown.delay(150).springify()}>
             <View style={[
               styles.section,
-              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
+              { backgroundColor: theme.colors.card }
             ]}>
               <Text style={[styles.sectionTitle, { color: theme.colors.textTertiary }]}>
                 TRANSLATION
               </Text>
               <View style={[styles.row, styles.rowBorder, { borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
-                <View style={[styles.iconContainer, { backgroundColor: 'rgba(34, 197, 94, 0.15)' }]}>
-                  <Ionicons name="volume-high" size={20} color="#22C55E" />
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.success + '26' }]}>
+                  <Ionicons name="volume-high" size={20} color={theme.colors.success} />
                 </View>
                 <View style={styles.rowTextContainer}>
                   <Text style={[styles.rowText, { color: theme.colors.text }]}>Auto-play Translation</Text>
@@ -287,8 +358,8 @@ export default function SettingsScreen() {
                 />
               </View>
               <View style={[styles.row, styles.rowBorder, { borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
-                <View style={[styles.iconContainer, { backgroundColor: 'rgba(236, 72, 153, 0.15)' }]}>
-                  <Ionicons name="time" size={20} color="#EC4899" />
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.accent + '26' }]}>
+                  <Ionicons name="time" size={20} color={theme.colors.accent} />
                 </View>
                 <View style={styles.rowTextContainer}>
                   <Text style={[styles.rowText, { color: theme.colors.text }]}>Save History</Text>
@@ -303,9 +374,26 @@ export default function SettingsScreen() {
                   thumbColor="#FFFFFF"
                 />
               </View>
+              <View style={[styles.row, styles.rowBorder, { borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.info + '26' }]}>
+                  <Ionicons name="volume-medium" size={20} color={theme.colors.info} />
+                </View>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Read Aloud in Conversation</Text>
+                  <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                    Speak the other person's translated text aloud
+                  </Text>
+                </View>
+                <Switch
+                  value={converseTts}
+                  onValueChange={setConverseTts}
+                  trackColor={{ true: theme.colors.primary, false: isDark ? '#333' : '#E5E5E5' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
               <View style={styles.row}>
-                <View style={[styles.iconContainer, { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
-                  <Ionicons name="phone-portrait" size={20} color="#F59E0B" />
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.warning + '26' }]}>
+                  <Ionicons name="phone-portrait" size={20} color={theme.colors.warning} />
                 </View>
                 <View style={styles.rowTextContainer}>
                   <Text style={[styles.rowText, { color: theme.colors.text }]}>Haptic Feedback</Text>
@@ -324,10 +412,10 @@ export default function SettingsScreen() {
           </Animated.View>
 
           {/* Translation Provider Section */}
-          <Animated.View entering={FadeInDown.delay(350).springify()}>
+          <Animated.View entering={FadeInDown.delay(175).springify()}>
             <View style={[
               styles.section,
-              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
+              { backgroundColor: theme.colors.card }
             ]}>
               <Text style={[styles.sectionTitle, { color: theme.colors.textTertiary }]}>
                 TRANSLATION PROVIDER
@@ -337,7 +425,7 @@ export default function SettingsScreen() {
                 onPress={() => setTranslationProvider('backend')}
                 activeOpacity={0.7}
               >
-                <View style={[styles.iconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.15)' }]}>
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.primary + '26' }]}>
                   <Ionicons name="cloud" size={20} color={theme.colors.primary} />
                 </View>
                 <View style={styles.rowTextContainer}>
@@ -358,8 +446,8 @@ export default function SettingsScreen() {
                   onPress={() => setTranslationProvider('deepl')}
                   activeOpacity={0.7}
                 >
-                  <View style={[styles.iconContainer, { backgroundColor: 'rgba(6, 182, 212, 0.15)' }]}>
-                    <Ionicons name="language" size={20} color="#06B6D4" />
+                  <View style={[styles.iconContainer, { backgroundColor: theme.colors.info + '26' }]}>
+                    <Ionicons name="language" size={20} color={theme.colors.info} />
                   </View>
                   <View style={styles.rowTextContainer}>
                     <Text style={[styles.rowText, { color: theme.colors.text }]}>DeepL</Text>
@@ -371,7 +459,7 @@ export default function SettingsScreen() {
                 <Ionicons
                   name={translationProvider === 'deepl' ? 'checkmark-circle' : 'ellipse-outline'}
                   size={22}
-                  color={translationProvider === 'deepl' ? '#06B6D4' : theme.colors.textTertiary}
+                  color={translationProvider === 'deepl' ? theme.colors.info : theme.colors.textTertiary}
                 />
               </View>
               {translationProvider === 'deepl' && (
@@ -411,15 +499,15 @@ export default function SettingsScreen() {
           </Animated.View>
 
           {/* Data Section */}
-          <Animated.View entering={FadeInDown.delay(400).springify()}>
+          <Animated.View entering={FadeInDown.delay(200).springify()}>
             <View style={[
               styles.section,
-              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
+              { backgroundColor: theme.colors.card }
             ]}>
               <Text style={[styles.sectionTitle, { color: theme.colors.textTertiary }]}>DATA</Text>
               <TouchableOpacity style={styles.row} onPress={handleClearHistory} activeOpacity={0.7}>
-                <View style={[styles.iconContainer, { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
-                  <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.error + '26' }]}>
+                  <Ionicons name="trash-outline" size={20} color={theme.colors.error} />
                 </View>
                 <View style={styles.rowTextContainer}>
                   <Text style={[styles.rowText, { color: theme.colors.text }]}>Clear History</Text>
@@ -433,15 +521,15 @@ export default function SettingsScreen() {
           </Animated.View>
 
           {/* About Section */}
-          <Animated.View entering={FadeInDown.delay(500).springify()}>
+          <Animated.View entering={FadeInDown.delay(250).springify()}>
             <View style={[
               styles.section,
-              { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)' }
+              { backgroundColor: theme.colors.card }
             ]}>
               <Text style={[styles.sectionTitle, { color: theme.colors.textTertiary }]}>ABOUT</Text>
               <View style={styles.row}>
-                <View style={[styles.iconContainer, { backgroundColor: 'rgba(6, 182, 212, 0.15)' }]}>
-                  <Ionicons name="information-circle" size={20} color="#06B6D4" />
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.info + '26' }]}>
+                  <Ionicons name="information-circle" size={20} color={theme.colors.info} />
                 </View>
                 <View style={styles.rowTextContainer}>
                   <Text style={[styles.rowText, { color: theme.colors.text }]}>Version</Text>
@@ -452,18 +540,18 @@ export default function SettingsScreen() {
           </Animated.View>
 
           {/* Auth Button */}
-          <Animated.View entering={FadeInDown.delay(600).springify()}>
+          <Animated.View entering={FadeInDown.delay(300).springify()}>
             {user ? (
               <TouchableOpacity
                 style={[
                   styles.authButton,
-                  { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: '#EF4444' }
+                  { backgroundColor: theme.colors.error + '1A', borderColor: theme.colors.error }
                 ]}
                 onPress={handleLogout}
                 activeOpacity={0.8}
               >
-                <Ionicons name="log-out-outline" size={20} color="#EF4444" />
-                <Text style={[styles.authButtonText, { color: '#EF4444' }]}>Sign Out</Text>
+                <Ionicons name="log-out-outline" size={20} color={theme.colors.error} />
+                <Text style={[styles.authButtonText, { color: theme.colors.error }]}>Sign Out</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
@@ -471,15 +559,10 @@ export default function SettingsScreen() {
                 onPress={() => router.push('/(auth)/login')}
                 activeOpacity={0.9}
               >
-                <LinearGradient
-                  colors={['#6366F1', '#8B5CF6']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.signInButton}
-                >
+                <View style={[styles.signInButton, { backgroundColor: theme.colors.primary }]}>
                   <Ionicons name="log-in-outline" size={20} color="#FFFFFF" />
                   <Text style={styles.signInButtonText}>Sign In</Text>
-                </LinearGradient>
+                </View>
               </TouchableOpacity>
             )}
           </Animated.View>
@@ -501,26 +584,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
-  orbContainer: {
-    ...StyleSheet.absoluteFillObject,
-    overflow: 'hidden',
-  },
-  orb: {
-    position: 'absolute',
-    borderRadius: 999,
-  },
-  orb1: {
-    width: 300,
-    height: 300,
-    top: -100,
-    right: -100,
-  },
-  orb2: {
-    width: 250,
-    height: 250,
-    bottom: 100,
-    left: -80,
-  },
   scrollContent: {
     padding: 20,
     paddingBottom: 120,
@@ -529,8 +592,8 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   title: {
-    fontSize: 32,
-    fontWeight: '800',
+    fontSize: 28,
+    fontWeight: '700',
     letterSpacing: -0.5,
   },
   subtitle: {
@@ -749,5 +812,58 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 12,
     paddingVertical: 20,
+  },
+  colorSchemeScroll: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+  },
+  colorSchemeContent: {
+    paddingRight: 16,
+    gap: 16,
+  },
+  colorChipContainer: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  colorChip: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkmarkBg: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colorChipLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  fontSizeRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  fontSizeButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    gap: 4,
+  },
+  fontSizePreview: {
+    fontWeight: '600',
+  },
+  fontSizeLabel: {
+    fontSize: 11,
+    fontWeight: '500',
   },
 });

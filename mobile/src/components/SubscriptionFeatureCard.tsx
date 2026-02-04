@@ -16,9 +16,9 @@ export const SubscriptionFeatureCard: React.FC<SubscriptionFeatureCardProps> = (
   icon,
 }) => {
   const colorScheme = useColorScheme();
-  const { theme: themePreference } = useSettingsStore();
+  const { theme: themePreference, colorScheme: colorSchemePref } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   return (
     <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>

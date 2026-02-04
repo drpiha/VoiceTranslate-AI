@@ -8,11 +8,12 @@ import {
   Alert,
   Animated,
   Easing,
+  PanResponder,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
+import ReAnimated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, runOnJS } from 'react-native-reanimated';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useUserStore } from '../../src/store/userStore';
@@ -23,6 +24,7 @@ import { TranscriptPanel, FinalizedSentence, CurrentSegment } from '../../src/co
 import { translationService, RealtimeTranslationResult } from '../../src/services/translationService';
 import { audioService, AudioSegment } from '../../src/services/audioService';
 import { getLanguageByCode } from '../../src/constants/languages';
+import { useNavigationStore } from '../../src/store/navigationStore';
 
 interface TranslationSegment {
   id: number;
@@ -35,7 +37,7 @@ interface TranslationSegment {
 
 export default function LiveScreen() {
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback } = useSettingsStore();
+  const { theme: themePreference, colorScheme: currentColorScheme, hapticFeedback } = useSettingsStore();
   const { user } = useUserStore();
   const { addTranslation } = useHistoryStore();
 
@@ -56,13 +58,20 @@ export default function LiveScreen() {
   // Current sentence being processed
   const [currentSegment, setCurrentSegment] = useState<CurrentSegment | null>(null);
 
-  // Panel expansion states
-  const [sourcePanelExpanded, setSourcePanelExpanded] = useState(false);
-  const [targetPanelExpanded, setTargetPanelExpanded] = useState(false);
+  // Panel ratio for drag-to-resize (shared values for smooth gesture)
+  const panelRatio = useSharedValue(0.5);
+  const startRatio = useSharedValue(0.5);
+  const containerHeight = useSharedValue(0);
+  const isDragging = useSharedValue(false);
+  const lastTapTime = useRef(0);
 
   // Swap animation
   const swapRotation = useRef(new Animated.Value(0)).current;
   const swapRotationCount = useRef(0);
+
+  // Language card animation
+  const languageCardHeight = useSharedValue(1);
+  const languageCardOpacity = useSharedValue(1);
 
   // Auto-reconnect state
   const reconnectAttempts = useRef(0);
@@ -79,7 +88,7 @@ export default function LiveScreen() {
   useEffect(() => { currentSegmentRef.current = currentSegment; }, [currentSegment]);
 
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, currentColorScheme);
 
   const handleHaptic = useCallback(() => {
     if (hapticFeedback) {
@@ -210,9 +219,6 @@ export default function LiveScreen() {
 
   const startListening = async () => {
     handleHaptic();
-    setSegments([]);
-    setFinalizedSentences([]);
-    setCurrentSegment(null);
     setDetectedLang(null);
     setConnectionError(null);
     reconnectAttempts.current = 0;
@@ -397,6 +403,12 @@ export default function LiveScreen() {
     translationService.preconnect();
   }, []);
 
+  // Animate language card when listening state changes
+  useEffect(() => {
+    languageCardHeight.value = withTiming(isListening ? 0.6 : 1, { duration: 300 });
+    languageCardOpacity.value = withTiming(isListening ? 0.8 : 1, { duration: 300 });
+  }, [isListening]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -408,26 +420,95 @@ export default function LiveScreen() {
     };
   }, []);
 
+  // Snap to nearest preset position
+  const SNAP_POINTS = [0.05, 0.25, 0.50, 0.75, 0.95];
+  const snapToNearest = (ratio: number) => {
+    let closest = SNAP_POINTS[0];
+    let minDist = Math.abs(ratio - closest);
+    for (const snap of SNAP_POINTS) {
+      const dist = Math.abs(ratio - snap);
+      if (dist < minDist) {
+        minDist = dist;
+        closest = snap;
+      }
+    }
+    return closest;
+  };
+
+  const doHapticLight = useCallback(() => {
+    if (hapticFeedback) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, [hapticFeedback]);
+
+  // Pan responder for drag-to-resize (updates shared values, no re-renders)
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 5,
+      onPanResponderGrant: () => {
+        startRatio.value = panelRatio.value;
+        isDragging.value = true;
+        runOnJS(doHapticLight)();
+
+        // Double-tap detection: reset to 50/50
+        const now = Date.now();
+        if (now - lastTapTime.current < 300) {
+          panelRatio.value = withSpring(0.5, { damping: 20, stiffness: 200 });
+          isDragging.value = false;
+          runOnJS(doHapticLight)();
+          lastTapTime.current = 0;
+          return;
+        }
+        lastTapTime.current = now;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (containerHeight.value > 0) {
+          const newRatio = startRatio.value + gestureState.dy / containerHeight.value;
+          panelRatio.value = Math.max(0.05, Math.min(0.95, newRatio));
+        }
+      },
+      onPanResponderRelease: () => {
+        isDragging.value = false;
+        // Snap to nearest preset with spring animation
+        const snapped = snapToNearest(panelRatio.value);
+        panelRatio.value = withSpring(snapped, { damping: 20, stiffness: 200 });
+        runOnJS(doHapticLight)();
+      },
+    })
+  ).current;
+
   // Get language info
   const sourceLangInfo = detectedLang ? getLanguageByCode(detectedLang) : getLanguageByCode(sourceLanguage);
   const targetLangInfo = getLanguageByCode(targetLanguage);
   const isCurrentlyUpdating = currentSegment !== null && !currentSegment.isFinal;
   const hasContent = finalizedSentences.length > 0 || (currentSegment?.transcript?.length ?? 0) > 0;
 
+  // Animated style for language card
+  const animatedLanguageCardStyle = useAnimatedStyle(() => ({
+    opacity: languageCardOpacity.value,
+    transform: [{ scaleY: languageCardHeight.value }],
+  }));
+
+  // Animated panel heights driven by shared values (no re-renders during drag)
+  const topPanelStyle = useAnimatedStyle(() => {
+    if (containerHeight.value <= 0) return { flex: 1 };
+    return { height: containerHeight.value * panelRatio.value };
+  });
+  const bottomPanelStyle = useAnimatedStyle(() => {
+    if (containerHeight.value <= 0) return { flex: 1 };
+    return { height: containerHeight.value * (1 - panelRatio.value) };
+  });
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <LinearGradient
-            colors={[theme.colors.gradient1, theme.colors.gradient2] as [string, string]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.headerIconBg}
-          >
-            <Ionicons name="globe" size={20} color="#FFF" />
-          </LinearGradient>
-          <Text style={[styles.title, { color: theme.colors.text }]}>Live Translate</Text>
+          <TouchableOpacity onPress={useNavigationStore.getState().openDrawer} style={styles.menuBtn}>
+            <Ionicons name="menu" size={22} color={theme.colors.text} />
+          </TouchableOpacity>
+          <Text style={[styles.title, { color: theme.colors.text }]}>Live</Text>
         </View>
         <View style={styles.headerRight}>
           <View style={[
@@ -454,82 +535,113 @@ export default function LiveScreen() {
       </View>
 
       {/* Language Selection */}
-      <View style={[styles.languageCard, { backgroundColor: theme.colors.card }]}>
-        <View style={styles.languageRow}>
-          <View style={styles.languageSelectorWrapper}>
-            <View style={styles.languageLabelRow}>
-              <Ionicons name="mic-outline" size={14} color={theme.colors.primary} />
-              <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>From</Text>
+      <ReAnimated.View style={[
+        styles.languageCard,
+        {
+          backgroundColor: theme.colors.primary + '08',
+          borderColor: theme.colors.primary + '20',
+        },
+        animatedLanguageCardStyle
+      ]}>
+        {isListening ? (
+          <View style={styles.languageRowCompact}>
+            <View style={styles.compactLangItem}>
+              <Text style={styles.compactFlag}>{sourceLangInfo?.flag || '🌐'}</Text>
+              <Text style={[styles.compactCode, { color: theme.colors.text }]}>
+                {detectedLang ? detectedLang.toUpperCase() : sourceLanguage.toUpperCase()}
+              </Text>
             </View>
-            <LanguageSelector value={sourceLanguage} onChange={setSourceLanguage} />
-          </View>
-
-          <TouchableOpacity onPress={handleSwapLanguages} style={styles.arrowContainer}>
-            <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
-              <LinearGradient
-                colors={[theme.colors.gradient1, theme.colors.gradient2] as [string, string]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.arrowBadge}
-              >
-                <Ionicons name="swap-horizontal" size={18} color="#FFF" />
-              </LinearGradient>
-            </Animated.View>
-          </TouchableOpacity>
-
-          <View style={styles.languageSelectorWrapper}>
-            <View style={styles.languageLabelRow}>
-              <Ionicons name="volume-medium-outline" size={14} color={theme.colors.accent} />
-              <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>To</Text>
+            <Ionicons name="arrow-forward" size={16} color={theme.colors.textSecondary} />
+            <View style={styles.compactLangItem}>
+              <Text style={styles.compactFlag}>{targetLangInfo?.flag || '🌐'}</Text>
+              <Text style={[styles.compactCode, { color: theme.colors.text }]}>
+                {targetLanguage.toUpperCase()}
+              </Text>
             </View>
-            <LanguageSelector value={targetLanguage} onChange={handleTargetLanguageChange} excludeAuto />
           </View>
-        </View>
-      </View>
+        ) : (
+          <View style={styles.languageRow}>
+            <View style={styles.languageSelectorWrapper}>
+              <View style={styles.languageLabelRow}>
+                <Ionicons name="mic-outline" size={14} color={theme.colors.primary} />
+                <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>From</Text>
+              </View>
+              <LanguageSelector value={sourceLanguage} onChange={setSourceLanguage} />
+            </View>
+
+            <TouchableOpacity onPress={handleSwapLanguages} style={styles.arrowContainer}>
+              <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
+                <View style={[styles.arrowBadge, { backgroundColor: theme.colors.primary }]}>
+                  <Ionicons name="swap-horizontal" size={18} color="#FFF" />
+                </View>
+              </Animated.View>
+            </TouchableOpacity>
+
+            <View style={styles.languageSelectorWrapper}>
+              <View style={styles.languageLabelRow}>
+                <Ionicons name="volume-medium-outline" size={14} color={theme.colors.accent} />
+                <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>To</Text>
+              </View>
+              <LanguageSelector value={targetLanguage} onChange={handleTargetLanguageChange} excludeAuto />
+            </View>
+          </View>
+        )}
+      </ReAnimated.View>
 
       {/* Two Panel Translation View */}
-      <View style={styles.translationPanels}>
-        <TranscriptPanel
-          theme={theme}
-          field="transcript"
-          languageCode={detectedLang || sourceLanguage}
-          languageName={detectedLang ? detectedLang.toUpperCase() : (sourceLangInfo?.name || 'Auto Detect')}
-          languageFlag={sourceLangInfo?.flag || '🌐'}
-          finalizedSentences={finalizedSentences}
-          currentSegment={currentSegment}
-          isExpanded={sourcePanelExpanded}
-          isOtherExpanded={targetPanelExpanded}
-          onToggleExpand={() => setSourcePanelExpanded(!sourcePanelExpanded)}
-          accentColor={theme.colors.primary}
-          isUpdating={isCurrentlyUpdating}
-          isListening={isListening}
-          isSpeaking={isSpeaking}
-          isProcessing={isProcessing}
-          onClear={clearSegments}
-          hasContent={hasContent}
-          emptyText="Spoken text will appear here"
-          processingText="Processing..."
-          showSentenceCount={true}
-        />
+      <View
+        style={styles.translationPanels}
+        onLayout={(e) => { containerHeight.value = e.nativeEvent.layout.height; }}
+      >
+        <ReAnimated.View style={[styles.panelContainer, topPanelStyle]}>
+          <TranscriptPanel
+            theme={theme}
+            field="transcript"
+            languageCode={detectedLang || sourceLanguage}
+            languageName={detectedLang ? detectedLang.toUpperCase() : (sourceLangInfo?.name || 'Auto Detect')}
+            languageFlag={sourceLangInfo?.flag || '🌐'}
+            finalizedSentences={finalizedSentences}
+            currentSegment={currentSegment}
+            accentColor={theme.colors.primary}
+            panHandlers={panResponder.panHandlers}
+            isUpdating={isCurrentlyUpdating}
+            isListening={isListening}
+            isSpeaking={isSpeaking}
+            isProcessing={isProcessing}
+            onClear={clearSegments}
+            hasContent={hasContent}
+            emptyText="Spoken text will appear here"
+            processingText="Processing..."
+            showSentenceCount={true}
+          />
+        </ReAnimated.View>
 
-        <TranscriptPanel
-          theme={theme}
-          field="translation"
-          languageCode={targetLanguage}
-          languageName={targetLangInfo?.name || targetLanguage.toUpperCase()}
-          languageFlag={targetLangInfo?.flag || '🌐'}
-          finalizedSentences={finalizedSentences}
-          currentSegment={currentSegment}
-          isExpanded={targetPanelExpanded}
-          isOtherExpanded={sourcePanelExpanded}
-          onToggleExpand={() => setTargetPanelExpanded(!targetPanelExpanded)}
-          accentColor={theme.colors.accent}
-          isUpdating={isRetranslating}
-          isProcessing={isRetranslating}
-          emptyText={isRetranslating ? 'Translating...' : 'Translation will appear here'}
-          processingText="Translating..."
-          showSentenceCount={true}
-        />
+        {/* Drag handle between panels */}
+        <View
+          style={styles.dragHandleArea}
+          {...panResponder.panHandlers}
+        >
+          <View style={[styles.dragHandlePill, { backgroundColor: theme.colors.textTertiary }]} />
+        </View>
+
+        <ReAnimated.View style={[styles.panelContainer, bottomPanelStyle]}>
+          <TranscriptPanel
+            theme={theme}
+            field="translation"
+            languageCode={targetLanguage}
+            languageName={targetLangInfo?.name || targetLanguage.toUpperCase()}
+            languageFlag={targetLangInfo?.flag || '🌐'}
+            finalizedSentences={finalizedSentences}
+            currentSegment={currentSegment}
+            accentColor={theme.colors.accent}
+            panHandlers={panResponder.panHandlers}
+            isUpdating={isRetranslating}
+            isProcessing={isRetranslating}
+            emptyText={isRetranslating ? 'Translating...' : 'Translation will appear here'}
+            processingText="Translating..."
+            showSentenceCount={true}
+          />
+        </ReAnimated.View>
       </View>
 
       {/* Connection Error */}
@@ -543,13 +655,15 @@ export default function LiveScreen() {
         </View>
       )}
 
-      {/* Mic Button */}
-      <FloatingMicButton
-        isListening={isListening}
-        isSpeaking={isSpeaking}
-        onPress={toggleListening}
-        theme={theme}
-      />
+      {/* Mic Button - absolutely positioned to always float above panels */}
+      <View style={styles.micButtonOverlay}>
+        <FloatingMicButton
+          isListening={isListening}
+          isSpeaking={isSpeaking}
+          onPress={toggleListening}
+          theme={theme}
+        />
+      </View>
     </SafeAreaView>
   );
 }
@@ -570,21 +684,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  headerIconBg: {
-    width: 34,
-    height: 34,
+  menuBtn: {
+    padding: 4,
+  },
+  vtBadge: {
+    width: 36,
+    height: 36,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  vtText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   title: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
-    letterSpacing: -0.5,
+    letterSpacing: -0.3,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -606,16 +733,35 @@ const styles = StyleSheet.create({
   },
   languageCard: {
     marginHorizontal: 16,
-    borderRadius: 20,
+    borderRadius: 16,
     padding: 14,
     marginBottom: 12,
-    shadowColor: '#6366F1',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 4,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.1)',
+    overflow: 'hidden',
+  },
+  languageRowCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingVertical: 4,
+  },
+  compactLangItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  compactFlag: {
+    fontSize: 18,
+  },
+  compactCode: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   languageRow: {
     flexDirection: 'row',
@@ -641,12 +787,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   arrowBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#6366F1',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 6,
@@ -655,7 +800,29 @@ const styles = StyleSheet.create({
   translationPanels: {
     flex: 1,
     paddingHorizontal: 16,
-    gap: 12,
+    paddingBottom: 100,
+  },
+  panelContainer: {
+    overflow: 'hidden',
+  },
+  dragHandleArea: {
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dragHandlePill: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    opacity: 0.35,
+  },
+  micButtonOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    pointerEvents: 'box-none',
   },
   errorBanner: {
     flexDirection: 'row',

@@ -9,11 +9,12 @@ import {
   Alert,
   Animated,
   Easing,
+  PanResponder,
 } from 'react-native';
+import ReAnimated, { useSharedValue, useAnimatedStyle, withSpring, runOnJS } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import * as Speech from 'expo-speech';
+import { ttsService } from '../../src/services/ttsService';
 import { Ionicons } from '@expo/vector-icons';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -25,10 +26,11 @@ import { translationService, RealtimeTranslationResult } from '../../src/service
 import { audioService, AudioSegment } from '../../src/services/audioService';
 import { getLanguageByCode } from '../../src/constants/languages';
 import { useDebouncedSpeaking } from '../../src/hooks/useDebouncedSpeaking';
+import { useNavigationStore } from '../../src/store/navigationStore';
 
 export default function ConversationScreen() {
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback, converseTts, colorScheme: userColorScheme } = useSettingsStore();
+  const { theme: themePreference, hapticFeedback, converseTts, faceToFaceMode, colorScheme: userColorScheme } = useSettingsStore();
   const {
     personALang,
     personBLang,
@@ -57,6 +59,75 @@ export default function ConversationScreen() {
   const scrollRefA = useRef<ScrollView>(null);
   const scrollRefB = useRef<ScrollView>(null);
   const segmentIdCounter = useRef(0);
+
+  // --- Session accumulation refs ---
+  // All VAD segments during one mic press accumulate into these refs.
+  // Only finalized into a single turn when the user presses stop.
+  const sessionTranscriptRef = useRef('');
+  const sessionTranslationRef = useRef('');
+  const sessionTurnIdRef = useRef('');
+  const isRecordingSessionRef = useRef(false);
+  const finalizationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Drag-to-resize for face-to-face mode
+  const conversePanelRatio = useSharedValue(0.5);
+  const converseStartRatio = useSharedValue(0.5);
+  const converseContainerHeight = useSharedValue(0);
+  const lastConverseTap = useRef(0);
+
+  const SNAP_POINTS = [0.2, 0.35, 0.5, 0.65, 0.8];
+  const snapToNearest = (ratio: number) => {
+    let closest = SNAP_POINTS[0];
+    let minDist = Math.abs(ratio - closest);
+    for (const snap of SNAP_POINTS) {
+      const dist = Math.abs(ratio - snap);
+      if (dist < minDist) { minDist = dist; closest = snap; }
+    }
+    return closest;
+  };
+
+  const doHapticLight = useCallback(() => {
+    if (hapticFeedback) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [hapticFeedback]);
+
+  const conversePanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 5,
+      onPanResponderGrant: () => {
+        converseStartRatio.value = conversePanelRatio.value;
+        runOnJS(doHapticLight)();
+        const now = Date.now();
+        if (now - lastConverseTap.current < 300) {
+          conversePanelRatio.value = withSpring(0.5, { damping: 20, stiffness: 200 });
+          runOnJS(doHapticLight)();
+          lastConverseTap.current = 0;
+          return;
+        }
+        lastConverseTap.current = now;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (converseContainerHeight.value > 0) {
+          const newRatio = converseStartRatio.value + gestureState.dy / converseContainerHeight.value;
+          conversePanelRatio.value = Math.max(0.15, Math.min(0.85, newRatio));
+        }
+      },
+      onPanResponderRelease: () => {
+        const snapped = snapToNearest(conversePanelRatio.value);
+        conversePanelRatio.value = withSpring(snapped, { damping: 20, stiffness: 200 });
+        runOnJS(doHapticLight)();
+      },
+    })
+  ).current;
+
+  // Use flex-based sizing so the fixed-height language bar and drag handle
+  // don't get squeezed out by explicit pixel heights.
+  const topSectionStyle = useAnimatedStyle(() => {
+    return { flex: conversePanelRatio.value };
+  });
+  const bottomSectionStyle = useAnimatedStyle(() => {
+    return { flex: 1 - conversePanelRatio.value };
+  });
 
   // Swap animation
   const swapRotation = useRef(new Animated.Value(0)).current;
@@ -109,7 +180,56 @@ export default function ConversationScreen() {
     }
   }, [hapticFeedback]);
 
-  // WebSocket message handler for conversation (uses refs to avoid stale closures)
+  // --- Finalize a complete recording session as one turn ---
+  const finalizeSession = useCallback((speaker: 'A' | 'B' | null) => {
+    const transcript = sessionTranscriptRef.current.trim();
+    const translation = sessionTranslationRef.current.trim();
+
+    if (speaker && (transcript || translation)) {
+      const sourceLang = speaker === 'A' ? personALangRef.current : personBLangRef.current;
+      const targetLang = speaker === 'A' ? personBLangRef.current : personALangRef.current;
+
+      const finalTurn: ConversationTurn = {
+        id: sessionTurnIdRef.current,
+        speaker,
+        originalText: transcript,
+        translatedText: translation,
+        originalLang: sourceLang,
+        translatedLang: targetLang,
+        timestamp: new Date(),
+        isFinal: true,
+      };
+
+      finalizeTurn(finalTurn);
+
+      // Save to history
+      addTranslation({
+        sourceText: finalTurn.originalText,
+        translatedText: finalTurn.translatedText,
+        sourceLanguage: sourceLang,
+        targetLanguage: targetLang,
+        isFavorite: false,
+        mode: 'conversation',
+      });
+
+      // TTS only after mic is stopped - read the complete translation
+      const ttsEnabled = useSettingsStore.getState().converseTts;
+      if (ttsEnabled && translation) {
+        ttsService.speak(translation, targetLang).catch(console.error);
+      }
+    }
+
+    // Clear currentTurn to remove typing dots
+    setCurrentTurn(null);
+    setActiveSpeaker(null);
+
+    // Reset session
+    sessionTranscriptRef.current = '';
+    sessionTranslationRef.current = '';
+    sessionTurnIdRef.current = '';
+  }, [finalizeTurn, addTranslation, setCurrentTurn, setActiveSpeaker]);
+
+  // WebSocket message handler - accumulates segments into one session turn
   const handleWebSocketMessage = useCallback((data: RealtimeTranslationResult) => {
     const speaker = activeSpeakerRef.current;
     if (!speaker) return;
@@ -121,54 +241,45 @@ export default function ConversationScreen() {
 
       if (data.isEmpty || (!data.transcript && !data.translation)) return;
 
-      const turnId = `${speaker}-${data.segmentId || Date.now()}`;
       const sourceLang = speaker === 'A' ? personALangRef.current : personBLangRef.current;
       const targetLang = speaker === 'A' ? personBLangRef.current : personALangRef.current;
       const isFinal = data.isFinal ?? false;
 
       if (isFinal) {
-        const curTurn = currentTurnRef.current;
-        const finalTurn: ConversationTurn = {
-          id: turnId,
+        // Accumulate this finalized segment into the session
+        const newTranscript = data.transcript || '';
+        const newTranslation = data.translation || '';
+
+        if (newTranscript) {
+          sessionTranscriptRef.current += (sessionTranscriptRef.current ? ' ' : '') + newTranscript;
+        }
+        if (newTranslation) {
+          sessionTranslationRef.current += (sessionTranslationRef.current ? ' ' : '') + newTranslation;
+        }
+
+        // Show accumulated progress as currentTurn (NOT finalized yet)
+        setCurrentTurn({
+          id: sessionTurnIdRef.current,
           speaker,
-          originalText: data.transcript || curTurn?.originalText || '',
-          translatedText: data.translation || curTurn?.translatedText || '',
+          originalText: sessionTranscriptRef.current,
+          translatedText: sessionTranslationRef.current,
           originalLang: sourceLang,
           translatedLang: targetLang,
           timestamp: new Date(),
-          isFinal: true,
-        };
-        finalizeTurn(finalTurn);
-        handleHaptic();
-
-        // TTS for finalized turn (speak the translated text)
-        if (converseTts && finalTurn.translatedText) {
-          try {
-            Speech.stop();
-            Speech.speak(finalTurn.translatedText, {
-              language: targetLang,
-              rate: 0.95,
-            });
-          } catch (e) {
-            console.error('TTS error:', e);
-          }
-        }
-
-        // Save to history
-        addTranslation({
-          sourceText: finalTurn.originalText,
-          translatedText: finalTurn.translatedText,
-          sourceLanguage: sourceLang,
-          targetLanguage: targetLang,
-          isFavorite: false,
-          mode: 'conversation',
+          isFinal: false,
         });
+
+        handleHaptic();
       } else {
+        // Interim (non-final) result - show accumulated text + this interim segment
+        const interimTranscript = data.transcript || '';
+        const interimTranslation = data.translation || '';
+
         setCurrentTurn({
-          id: turnId,
+          id: sessionTurnIdRef.current,
           speaker,
-          originalText: data.transcript || '',
-          translatedText: data.translation || '',
+          originalText: sessionTranscriptRef.current + (interimTranscript ? (sessionTranscriptRef.current ? ' ' : '') + interimTranscript : ''),
+          translatedText: sessionTranslationRef.current + (interimTranslation ? (sessionTranslationRef.current ? ' ' : '') + interimTranslation : ''),
           originalLang: sourceLang,
           translatedLang: targetLang,
           timestamp: new Date(),
@@ -180,7 +291,7 @@ export default function ConversationScreen() {
       setConnectionError(data.error || 'Unknown error');
       setIsProcessing(false);
     }
-  }, [finalizeTurn, handleHaptic, addTranslation, setCurrentTurn, setIsProcessing]);
+  }, [handleHaptic, setCurrentTurn, setIsProcessing]);
 
   const handleSegmentReady = useCallback((segment: AudioSegment) => {
     const speaker = activeSpeakerRef.current;
@@ -201,16 +312,39 @@ export default function ConversationScreen() {
   }, []);
 
   const startSpeaking = async (speaker: 'A' | 'B') => {
-    if (isListening) return; // Already someone speaking
+    if (isListening) return; // Already recording
 
-    handleHaptic();
+    // Cancel any pending finalization from a previous session and finalize immediately
+    if (finalizationTimeoutRef.current) {
+      clearTimeout(finalizationTimeoutRef.current);
+      finalizationTimeoutRef.current = null;
+      // Finalize the previous session immediately if there's accumulated text
+      if (sessionTranscriptRef.current.trim() || sessionTranslationRef.current.trim()) {
+        finalizeSession(activeSpeakerRef.current);
+      }
+    }
+
+    // Stop any currently playing TTS
+    ttsService.stop();
+
+    // Recording START haptic - distinct notification type
+    if (hapticFeedback) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    }
+
+    // Reset session accumulation for new recording
+    sessionTranscriptRef.current = '';
+    sessionTranslationRef.current = '';
+    sessionTurnIdRef.current = `${speaker}-session-${Date.now()}`;
+    isRecordingSessionRef.current = true;
+
     setActiveSpeaker(speaker);
     setConnectionError(null);
 
     const sourceLang = speaker === 'A' ? personALang : personBLang;
     const targetLang = speaker === 'A' ? personBLang : personALang;
 
-    // Use ensureConnected - reuses preconnected WebSocket if available (instant start)
+    // Connect WebSocket (reuses preconnected socket if available)
     try {
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -237,6 +371,7 @@ export default function ConversationScreen() {
       setIsConnected(false);
       setIsListening(false);
       setActiveSpeaker(null);
+      isRecordingSessionRef.current = false;
       return;
     }
 
@@ -251,19 +386,40 @@ export default function ConversationScreen() {
     } else {
       Alert.alert('Microphone Error', 'Could not start microphone.');
       setActiveSpeaker(null);
+      isRecordingSessionRef.current = false;
     }
   };
 
   const stopSpeaking = () => {
-    handleHaptic();
+    // Recording STOP haptic - success type (distinct from start)
+    if (hapticFeedback) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+
     audioService.stopRealtimeMode();
     setIsListening(false);
     setIsSpeaking(false);
-    setActiveSpeaker(null);
+    isRecordingSessionRef.current = false;
+
+    // Capture speaker before the timeout clears it
+    const speaker = activeSpeakerRef.current;
+
+    // Wait briefly for any pending segment results to arrive, then finalize
+    finalizationTimeoutRef.current = setTimeout(() => {
+      finalizeSession(speaker);
+      finalizationTimeoutRef.current = null;
+    }, 1200);
   };
 
   const handleClear = () => {
     handleHaptic();
+
+    // Cancel pending finalization
+    if (finalizationTimeoutRef.current) {
+      clearTimeout(finalizationTimeoutRef.current);
+      finalizationTimeoutRef.current = null;
+    }
+
     if (isListening) {
       audioService.stopRealtimeMode();
       setIsListening(false);
@@ -274,14 +430,36 @@ export default function ConversationScreen() {
       translationService.disconnect();
       setIsConnected(false);
     }
+
+    ttsService.stop();
     audioService.resetSegmentCount();
     clearConversation();
     setConnectionError(null);
+
+    // Reset session refs
+    sessionTranscriptRef.current = '';
+    sessionTranslationRef.current = '';
+    sessionTurnIdRef.current = '';
+    isRecordingSessionRef.current = false;
   };
+
+  // Handle per-bubble speak button - TOGGLE: tap to play, tap again to stop
+  const handleBubbleSpeak = useCallback((text: string, lang: string) => {
+    if (ttsService.isPlaying()) {
+      ttsService.stop();
+    } else {
+      ttsService.speak(text, lang).catch(console.error);
+    }
+  }, []);
 
   const toggleTts = () => {
     handleHaptic();
     useSettingsStore.getState().setConverseTts(!converseTts);
+  };
+
+  const toggleFaceToFace = () => {
+    handleHaptic();
+    useSettingsStore.getState().setFaceToFaceMode(!faceToFaceMode);
   };
 
   // Pulse animation for active speak button + badge glow
@@ -341,7 +519,10 @@ export default function ConversationScreen() {
     return () => {
       audioService.stopRealtimeMode();
       translationService.disconnect();
-      Speech.stop();
+      ttsService.stop();
+      if (finalizationTimeoutRef.current) {
+        clearTimeout(finalizationTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -372,6 +553,8 @@ export default function ConversationScreen() {
           isCurrent={!turn.isFinal}
           isLatest={index === allTurns.length - 1}
           flag={speakerInfo?.flag}
+          onSpeak={handleBubbleSpeak}
+          showSpeakButton={converseTts}
         />
       );
     });
@@ -404,11 +587,7 @@ export default function ConversationScreen() {
     const isActive = isListening && activeSpeaker === person;
     const isOtherActive = isListening && activeSpeaker !== person;
     const pulseAnim = person === 'A' ? speakAPulse : speakBPulse;
-    const gradientColors = isActive
-      ? [theme.colors.error, theme.colors.errorLight] as [string, string]
-      : person === 'A'
-        ? [theme.colors.accent, theme.colors.primary] as [string, string]
-        : [theme.colors.secondary, theme.colors.accent] as [string, string];
+    const personInfo = person === 'A' ? personAInfo : personBInfo;
 
     return (
       <TouchableOpacity
@@ -420,31 +599,39 @@ export default function ConversationScreen() {
           isOtherActive && styles.speakButtonDisabled,
           { transform: [{ scale: pulseAnim }] },
         ]}>
-          <LinearGradient
-            colors={gradientColors}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.speakButton}
-          >
+          <View style={[
+            styles.speakButton,
+            {
+              backgroundColor: isActive
+                ? theme.colors.error
+                : theme.colors.primary + '15',
+              borderWidth: 1,
+              borderColor: isActive
+                ? theme.colors.error
+                : theme.colors.primary + '25',
+            },
+          ]}>
             {isActive && displaySpeaking ? (
               <View style={styles.waveformContainer}>
                 {[0, 60, 120, 180].map((delay, i) => (
-                  <WaveformBar key={i} delay={delay} color="#FFF" />
+                  <WaveformBar key={i} delay={delay} color={'#FFF'} />
                 ))}
               </View>
             ) : (
               <Ionicons
                 name={isActive ? 'stop' : 'mic'}
                 size={20}
-                color="#FFF"
+                color={isActive ? '#FFF' : theme.colors.primary}
               />
             )}
-            <Text style={styles.speakButtonText}>
+            <Text style={[styles.speakButtonText, {
+              color: isActive ? '#FFF' : theme.colors.text,
+            }]}>
               {isActive
-                ? (displaySpeaking ? 'Listening...' : 'Tap to stop')
-                : `Tap to speak - Person ${person}`}
+                ? (displaySpeaking ? 'Listening...' : 'Stop')
+                : 'Speak'}
             </Text>
-          </LinearGradient>
+          </View>
         </Animated.View>
       </TouchableOpacity>
     );
@@ -455,168 +642,233 @@ export default function ConversationScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <LinearGradient
-            colors={[theme.colors.secondary, theme.colors.accent] as [string, string]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.headerIconBg}
-          >
-            <Ionicons name="people" size={16} color="#FFF" />
-          </LinearGradient>
-          <Text style={[styles.title, { color: theme.colors.text }]}>Conversation</Text>
+          <TouchableOpacity onPress={useNavigationStore.getState().openDrawer} style={styles.menuBtn}>
+            <Ionicons name="menu" size={22} color={theme.colors.text} />
+          </TouchableOpacity>
+          <Text style={[styles.title, { color: theme.colors.text }]}>Converse</Text>
+          <View style={[
+            styles.statusDotSmall,
+            { backgroundColor: isConnected ? theme.colors.success : theme.colors.textTertiary }
+          ]} />
         </View>
         <View style={styles.headerRight}>
-          <TouchableOpacity onPress={toggleTts} style={[
+          <TouchableOpacity onPress={toggleFaceToFace} style={[
             styles.ttsToggle,
-            { backgroundColor: converseTts ? theme.colors.accent + '15' : 'transparent' }
+            {
+              backgroundColor: faceToFaceMode
+                ? theme.colors.primary + '15'
+                : 'transparent',
+              borderWidth: 1,
+              borderColor: faceToFaceMode
+                ? theme.colors.primary + '30'
+                : (isDark ? 'rgba(148, 163, 184, 0.2)' : 'rgba(0, 0, 0, 0.08)'),
+            }
           ]}>
             <Ionicons
-              name={converseTts ? 'volume-high' : 'volume-mute-outline'}
-              size={20}
-              color={converseTts ? theme.colors.accent : theme.colors.textTertiary}
+              name={faceToFaceMode ? 'people' : 'person'}
+              size={18}
+              color={faceToFaceMode ? theme.colors.primary : theme.colors.textTertiary}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={toggleTts} style={[
+            styles.ttsToggle,
+            {
+              backgroundColor: converseTts
+                ? theme.colors.primary + '15'
+                : 'transparent',
+              borderWidth: 1,
+              borderColor: converseTts
+                ? theme.colors.primary + '30'
+                : (isDark ? 'rgba(148, 163, 184, 0.2)' : 'rgba(0, 0, 0, 0.08)'),
+            }
+          ]}>
+            <Ionicons
+              name={converseTts ? 'chatbubble-ellipses' : 'chatbubble-ellipses-outline'}
+              size={18}
+              color={converseTts ? theme.colors.primary : theme.colors.textTertiary}
             />
           </TouchableOpacity>
           {turns.length > 0 && (
             <TouchableOpacity onPress={handleClear} style={styles.clearBtn}>
-              <Ionicons name="trash-outline" size={20} color={theme.colors.textTertiary} />
+              <Ionicons name="trash-outline" size={18} color={theme.colors.textTertiary} />
             </TouchableOpacity>
           )}
-          <View style={[
-            styles.statusBadge,
-            { backgroundColor: isConnected ? theme.colors.success : theme.colors.primary }
-          ]}>
-            <View style={[styles.statusDot, { backgroundColor: isConnected ? theme.colors.successLight : theme.colors.primaryLight }]} />
-            <Text style={styles.statusText}>
-              {isConnected ? 'Live' : 'Ready'}
-            </Text>
-          </View>
         </View>
       </View>
 
-      {/* Person A Section (Top - rotated 180deg for face-to-face) */}
-      <View style={[styles.personSection, styles.personASection]}>
-        <View style={styles.rotatedContent}>
-          {/* Conversation bubbles (Person A's view) */}
-          <ScrollView
-            ref={scrollRefA}
-            style={styles.bubblesContainer}
-            contentContainerStyle={styles.bubblesContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {turns.length === 0 && !currentTurn ? (
-              <View style={styles.emptyState}>
-                <Ionicons name="chatbubbles-outline" size={24} color={theme.colors.textTertiary} />
-                <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                  Tap the button to start speaking
-                </Text>
-              </View>
-            ) : (
-              renderBubblesForPerson('A')
-            )}
-          </ScrollView>
-
-          {/* Speak button for Person A */}
-          <SpeakButton person="A" isTop={true} />
-        </View>
-      </View>
-
-      {/* Language Bar - Center (NOT rotated, both selectors accessible) */}
-      <View style={[styles.languageBar, { backgroundColor: theme.colors.card }]}>
-        <View style={styles.langBarSide}>
-          <Animated.View style={[
-            styles.personBadge,
-            {
-              backgroundColor: badgeAGlow.interpolate({
-                inputRange: [0, 1],
-                outputRange: [theme.colors.accent + '15', theme.colors.accent + '40'],
-              }),
-            },
-          ]}>
-            <Text style={styles.personFlag}>{personAInfo?.flag || '🌐'}</Text>
-            <Text style={[styles.personLabel, { color: theme.colors.accent }]}>A</Text>
-            {isListening && activeSpeaker === 'A' && (
-              <View style={[styles.activeDot, { backgroundColor: theme.colors.accent }]} />
-            )}
-          </Animated.View>
-          <View style={styles.langSelectCompact}>
-            <LanguageSelector value={personALang} onChange={setPersonALang} excludeAuto />
-          </View>
-        </View>
-
-        <TouchableOpacity
-          onPress={() => {
-            handleHaptic();
-            swapRotationCount.current += 1;
-            Animated.spring(swapRotation, {
-              toValue: swapRotationCount.current,
-              useNativeDriver: true,
-              tension: 50,
-              friction: 8,
-            }).start();
-            const tempLang = personALang;
-            setPersonALang(personBLang);
-            setPersonBLang(tempLang);
-          }}
-          style={styles.swapButton}
+      {faceToFaceMode ? (
+        <View
+          style={styles.faceToFaceContainer}
+          onLayout={(e) => { converseContainerHeight.value = e.nativeEvent.layout.height; }}
         >
-          <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
-            <LinearGradient
-              colors={[theme.colors.secondary, theme.colors.accent] as [string, string]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.swapButtonGradient}
-            >
-              <Ionicons name="swap-horizontal" size={14} color="#FFF" />
-            </LinearGradient>
-          </Animated.View>
-        </TouchableOpacity>
-
-        <View style={styles.langBarSide}>
-          <View style={styles.langSelectCompact}>
-            <LanguageSelector value={personBLang} onChange={setPersonBLang} excludeAuto />
-          </View>
-          <Animated.View style={[
-            styles.personBadge,
-            {
-              backgroundColor: badgeBGlow.interpolate({
-                inputRange: [0, 1],
-                outputRange: [theme.colors.secondary + '15', theme.colors.secondary + '40'],
-              }),
-            },
-          ]}>
-            <Text style={styles.personFlag}>{personBInfo?.flag || '🌐'}</Text>
-            <Text style={[styles.personLabel, { color: theme.colors.secondary }]}>B</Text>
-            {isListening && activeSpeaker === 'B' && (
-              <View style={[styles.activeDot, { backgroundColor: theme.colors.secondary }]} />
-            )}
-          </Animated.View>
-        </View>
-      </View>
-
-      {/* Person B Section (Bottom - normal orientation) */}
-      <View style={[styles.personSection, styles.personBSection]}>
-        {/* Speak button for Person B */}
-        <SpeakButton person="B" isTop={false} />
-
-        {/* Conversation bubbles (Person B's view) */}
-        <ScrollView
-          ref={scrollRefB}
-          style={styles.bubblesContainer}
-          contentContainerStyle={styles.bubblesContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {turns.length === 0 && !currentTurn ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="chatbubbles-outline" size={24} color={theme.colors.textTertiary} />
-              <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                Tap the button to start speaking
-              </Text>
+          {/* Person A Section (Top - inner content rotated for face-to-face) */}
+          <ReAnimated.View style={[styles.personSection, topSectionStyle]}>
+            <View style={styles.rotatedContent}>
+              <ScrollView
+                ref={scrollRefA}
+                style={styles.bubblesContainer}
+                contentContainerStyle={styles.bubblesContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {turns.length === 0 && !currentTurn ? (
+                  <View style={styles.emptyState}>
+                    <Ionicons name="chatbubbles-outline" size={24} color={theme.colors.textTertiary} />
+                    <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
+                      Tap the button to start speaking
+                    </Text>
+                  </View>
+                ) : (
+                  renderBubblesForPerson('A')
+                )}
+              </ScrollView>
+              <SpeakButton person="A" isTop={true} />
             </View>
-          ) : (
-            renderBubblesForPerson('B')
-          )}
-        </ScrollView>
-      </View>
+          </ReAnimated.View>
+
+          {/* Drag handle between sections */}
+          <View
+            style={styles.converseDragHandle}
+            {...conversePanResponder.panHandlers}
+          >
+            <View style={[styles.converseDragPill, { backgroundColor: theme.colors.textTertiary }]} />
+          </View>
+
+          {/* Language Bar - clean, centered swap */}
+          <View style={[styles.languageBar, {
+            backgroundColor: theme.colors.card,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+          }]}>
+            <View style={styles.langBarSide}>
+              <LanguageSelector value={personALang} onChange={setPersonALang} excludeAuto />
+            </View>
+
+            <TouchableOpacity
+              onPress={() => {
+                handleHaptic();
+                swapRotationCount.current += 1;
+                Animated.spring(swapRotation, {
+                  toValue: swapRotationCount.current,
+                  useNativeDriver: true,
+                  tension: 50,
+                  friction: 8,
+                }).start();
+                const tempLang = personALang;
+                setPersonALang(personBLang);
+                setPersonBLang(tempLang);
+              }}
+              style={styles.swapButton}
+            >
+              <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
+                <View style={[styles.swapButtonCircle, {
+                  backgroundColor: theme.colors.primary + '10',
+                }]}>
+                  <Ionicons name="swap-horizontal" size={16} color={theme.colors.primary} />
+                </View>
+              </Animated.View>
+            </TouchableOpacity>
+
+            <View style={styles.langBarSide}>
+              <LanguageSelector value={personBLang} onChange={setPersonBLang} excludeAuto />
+            </View>
+          </View>
+
+          {/* Person B Section (Bottom) */}
+          <ReAnimated.View style={[styles.personSection, bottomSectionStyle]}>
+            <SpeakButton person="B" isTop={false} />
+            <ScrollView
+              ref={scrollRefB}
+              style={styles.bubblesContainer}
+              contentContainerStyle={styles.bubblesContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {turns.length === 0 && !currentTurn ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="chatbubbles-outline" size={24} color={theme.colors.textTertiary} />
+                  <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
+                    Tap the button to start speaking
+                  </Text>
+                </View>
+              ) : (
+                renderBubblesForPerson('B')
+              )}
+            </ScrollView>
+          </ReAnimated.View>
+        </View>
+      ) : (
+        <>
+          {/* Unified Chat Mode - Language Bar at top */}
+          <View style={[styles.languageBar, {
+            backgroundColor: theme.colors.card,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+          }]}>
+            <View style={styles.langBarSide}>
+              <LanguageSelector value={personALang} onChange={setPersonALang} excludeAuto />
+            </View>
+
+            <TouchableOpacity
+              onPress={() => {
+                handleHaptic();
+                swapRotationCount.current += 1;
+                Animated.spring(swapRotation, {
+                  toValue: swapRotationCount.current,
+                  useNativeDriver: true,
+                  tension: 50,
+                  friction: 8,
+                }).start();
+                const tempLang = personALang;
+                setPersonALang(personBLang);
+                setPersonBLang(tempLang);
+              }}
+              style={styles.swapButton}
+            >
+              <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
+                <View style={[styles.swapButtonCircle, {
+                  backgroundColor: theme.colors.primary + '10',
+                }]}>
+                  <Ionicons name="swap-horizontal" size={16} color={theme.colors.primary} />
+                </View>
+              </Animated.View>
+            </TouchableOpacity>
+
+            <View style={styles.langBarSide}>
+              <LanguageSelector value={personBLang} onChange={setPersonBLang} excludeAuto />
+            </View>
+          </View>
+
+          {/* Single unified chat view */}
+          <View style={styles.unifiedChatContainer}>
+            <ScrollView
+              ref={scrollRefB}
+              style={styles.bubblesContainer}
+              contentContainerStyle={styles.bubblesContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {turns.length === 0 && !currentTurn ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="chatbubbles-outline" size={32} color={theme.colors.textTertiary} />
+                  <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
+                    Tap a speak button to start a conversation
+                  </Text>
+                </View>
+              ) : (
+                renderBubblesForPerson('B')
+              )}
+            </ScrollView>
+          </View>
+
+          {/* Both speak buttons side by side */}
+          <View style={styles.unifiedSpeakRow}>
+            <View style={styles.unifiedSpeakBtn}>
+              <SpeakButton person="A" isTop={false} />
+            </View>
+            <View style={styles.unifiedSpeakBtn}>
+              <SpeakButton person="B" isTop={false} />
+            </View>
+          </View>
+        </>
+      )}
 
       {/* Connection Error */}
       {connectionError && (
@@ -638,90 +890,81 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 6,
+    paddingVertical: 8,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-  },
-  headerIconBg: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: 8,
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   title: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    letterSpacing: -0.5,
+    letterSpacing: -0.3,
+  },
+  statusDotSmall: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  menuBtn: {
+    padding: 4,
+    marginRight: 4,
   },
   clearBtn: {
     padding: 6,
   },
   ttsToggle: {
-    padding: 6,
-    borderRadius: 8,
+    padding: 7,
+    borderRadius: 10,
   },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 16,
-    gap: 5,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#FFFFFF',
+  faceToFaceContainer: {
+    flex: 1,
   },
   personSection: {
-    flex: 1,
     paddingHorizontal: 12,
+    overflow: 'hidden',
   },
-  personASection: {
-    transform: [{ rotate: '180deg' }],
-  },
-  personBSection: {},
   rotatedContent: {
     flex: 1,
+    transform: [{ rotate: '180deg' }],
+  },
+  converseDragHandle: {
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  converseDragPill: {
+    width: 40,
+    height: 5,
+    borderRadius: 2.5,
+    opacity: 0.4,
   },
   personBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     borderRadius: 10,
     gap: 4,
   },
   personFlag: {
-    fontSize: 14,
-  },
-  personLabel: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 20,
   },
   languageBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginHorizontal: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 12,
-    marginVertical: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
+    marginVertical: 3,
   },
   langBarSide: {
     flex: 1,
@@ -735,10 +978,10 @@ const styles = StyleSheet.create({
   swapButton: {
     marginHorizontal: 8,
   },
-  swapButtonGradient: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+  swapButtonCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -747,35 +990,39 @@ const styles = StyleSheet.create({
   },
   bubblesContent: {
     flexGrow: 1,
-    paddingVertical: 4,
+    paddingVertical: 8,
+    paddingBottom: 24,
   },
   emptyState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    gap: 6,
+    paddingVertical: 20,
+    gap: 8,
   },
   emptyText: {
     fontSize: 13,
     textAlign: 'center',
+    opacity: 0.7,
   },
   speakButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    gap: 6,
-    marginVertical: 2,
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    borderRadius: 14,
+    gap: 8,
+    marginVertical: 4,
   },
   speakButtonDisabled: {
-    opacity: 0.4,
+    opacity: 0.35,
+  },
+  speakButtonFlag: {
+    fontSize: 22,
   },
   speakButtonText: {
-    color: '#FFF',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
   },
   waveformContainer: {
@@ -808,5 +1055,18 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontWeight: '500',
+  },
+  unifiedChatContainer: {
+    flex: 1,
+    paddingHorizontal: 12,
+  },
+  unifiedSpeakRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  unifiedSpeakBtn: {
+    flex: 1,
   },
 });

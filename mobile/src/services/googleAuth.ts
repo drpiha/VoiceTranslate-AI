@@ -94,7 +94,6 @@ const useRealGoogleAuth = () => {
     webClientId: GOOGLE_AUTH_CONFIG.webClientId,
     androidClientId: GOOGLE_AUTH_CONFIG.androidClientId,
     iosClientId: GOOGLE_AUTH_CONFIG.iosClientId,
-    expoClientId: GOOGLE_AUTH_CONFIG.expoClientId,
     // Let expo-auth-session automatically generate the redirect URI from app.json scheme
     // For Android: voicetranslate:/oauth2redirect (based on scheme in app.json)
   });

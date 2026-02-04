@@ -24,9 +24,9 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   const [isVisible, setIsVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback, recentLanguages } = useSettingsStore();
+  const { theme: themePreference, hapticFeedback, recentLanguages, colorScheme: colorSchemePref } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   const languages = excludeAuto ? LANGUAGES.filter(l => l.code !== 'auto') : LANGUAGES;
 
@@ -109,7 +109,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
           />
           
           <View style={[styles.modalContent, { backgroundColor: theme.colors.background }]}>
-            <View style={styles.modalHeader}>
+            <View style={[styles.modalHeader, { borderBottomColor: theme.colors.border }]}>
               <Text style={[styles.modalTitle, { color: theme.colors.text }]}>Select Language</Text>
               <TouchableOpacity onPress={() => setIsVisible(false)}>
                 <Text style={[styles.closeButton, { color: theme.colors.primary }]}>Done</Text>
@@ -143,7 +143,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
                     value === item.code && { backgroundColor: theme.colors.primaryLight + '20' },
                   ]}
                 >
-                  <View style={styles.languageCode}>
+                  <View style={[styles.languageCode, { backgroundColor: theme.colors.primary + '1A' }]}>
                     <Text style={[styles.languageCodeText, { color: theme.colors.primary }]}>
                       {item.code.toUpperCase()}
                     </Text>
@@ -217,7 +217,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
   },
   modalTitle: {
     fontSize: 20,
@@ -245,7 +244,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 8,
-    backgroundColor: 'rgba(30, 58, 138, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },

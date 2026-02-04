@@ -11,9 +11,9 @@ interface AudioWaveformProps {
 
 export const AudioWaveform: React.FC<AudioWaveformProps> = ({ isActive, barCount = 5 }) => {
   const colorScheme = useColorScheme();
-  const { theme: themePreference } = useSettingsStore();
+  const { theme: themePreference, colorScheme: colorSchemePref } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   const animations = useRef(
     Array.from({ length: barCount }, () => new Animated.Value(0.3))

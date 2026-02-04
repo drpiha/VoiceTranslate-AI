@@ -16,10 +16,10 @@ export default function SignUpScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const colorScheme = useColorScheme();
-  const { theme: themePreference } = useSettingsStore();
+  const { theme: themePreference, colorScheme: colorSchemePref } = useSettingsStore();
   const register = useUserStore((state) => state.register);
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   const validatePassword = (pwd: string): { valid: boolean; message: string } => {
     if (pwd.length < 10) {

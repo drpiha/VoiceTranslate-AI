@@ -19,7 +19,6 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   useAnimatedStyle,
@@ -33,14 +32,15 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 import { getLanguageByCode } from '../../src/constants/languages';
 import { Translation } from '../../src/types';
 import * as Haptics from 'expo-haptics';
+import { useNavigationStore } from '../../src/store/navigationStore';
 
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
 
 export default function HistoryScreen() {
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback } = useSettingsStore();
+  const { theme: themePreference, hapticFeedback, colorScheme: colorSchemePref } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   const { translations, searchQuery, setSearchQuery, toggleFavorite, removeTranslation, loadHistory } = useHistoryStore();
 
@@ -109,24 +109,24 @@ export default function HistoryScreen() {
           style={[
             styles.card,
             {
-              backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.95)',
+              backgroundColor: theme.colors.card,
               borderColor: isExpanded
-                ? (isDark ? 'rgba(99, 102, 241, 0.4)' : 'rgba(99, 102, 241, 0.3)')
-                : (isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.1)'),
+                ? (theme.colors.primary + (isDark ? '66' : '4D'))
+                : (theme.colors.primary + (isDark ? '33' : '1A')),
             }
           ]}
           activeOpacity={0.7}
         >
           <View style={styles.cardHeader}>
             <View style={styles.languagePills}>
-              <View style={[styles.languagePill, { backgroundColor: isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.1)' }]}>
+              <View style={[styles.languagePill, { backgroundColor: theme.colors.primary + (isDark ? '33' : '1A') }]}>
                 <Text style={styles.flagEmoji}>{sourceLang?.flag}</Text>
                 <Text style={[styles.pillText, { color: theme.colors.primary }]}>{sourceLang?.code?.toUpperCase()}</Text>
               </View>
               <Ionicons name="arrow-forward" size={14} color={theme.colors.textTertiary} />
-              <View style={[styles.languagePill, { backgroundColor: isDark ? 'rgba(236, 72, 153, 0.2)' : 'rgba(236, 72, 153, 0.1)' }]}>
+              <View style={[styles.languagePill, { backgroundColor: theme.colors.accent + (isDark ? '33' : '1A') }]}>
                 <Text style={styles.flagEmoji}>{targetLang?.flag}</Text>
-                <Text style={[styles.pillText, { color: '#EC4899' }]}>{targetLang?.code?.toUpperCase()}</Text>
+                <Text style={[styles.pillText, { color: theme.colors.accent }]}>{targetLang?.code?.toUpperCase()}</Text>
               </View>
             </View>
             <View style={styles.cardActions}>
@@ -152,7 +152,7 @@ export default function HistoryScreen() {
               </Text>
             </View>
 
-            <View style={[styles.textBlock, { borderLeftColor: '#EC4899' }]}>
+            <View style={[styles.textBlock, { borderLeftColor: theme.colors.accent }]}>
               <Text style={[styles.textLabel, { color: theme.colors.textTertiary }]}>Translation</Text>
               <Text
                 style={[styles.textContent, { color: theme.colors.text }]}
@@ -174,53 +174,29 @@ export default function HistoryScreen() {
     );
   };
 
-  const bgGradientColors = isDark
-    ? ['#0F0F1A', '#1A1A2E', '#16162A'] as const
-    : ['#F8FAFC', '#EEF2FF', '#E0E7FF'] as const;
-
   return (
-    <View style={styles.container}>
-      {/* Background gradient */}
-      <LinearGradient
-        colors={bgGradientColors}
-        style={StyleSheet.absoluteFill}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      />
-
-      {/* Decorative orbs */}
-      <View style={styles.orbContainer}>
-        <LinearGradient
-          colors={isDark
-            ? ['rgba(99, 102, 241, 0.12)', 'transparent']
-            : ['rgba(99, 102, 241, 0.08)', 'transparent']
-          }
-          style={[styles.orb, styles.orb1]}
-        />
-        <LinearGradient
-          colors={isDark
-            ? ['rgba(236, 72, 153, 0.1)', 'transparent']
-            : ['rgba(236, 72, 153, 0.06)', 'transparent']
-          }
-          style={[styles.orb, styles.orb2]}
-        />
-      </View>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
 
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.header}>
           <View style={styles.headerTop}>
-            <View>
-              <Text style={[styles.headerTitle, { color: theme.colors.text }]}>History</Text>
-              <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>
-                {filteredTranslations.length} translation{filteredTranslations.length !== 1 ? 's' : ''}
-              </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity onPress={useNavigationStore.getState().openDrawer} style={{ padding: 4 }}>
+                <Ionicons name="menu" size={22} color={theme.colors.text} />
+              </TouchableOpacity>
+              <View>
+                <Text style={[styles.headerTitle, { color: theme.colors.text }]}>History</Text>
+                <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>
+                  {filteredTranslations.length} translation{filteredTranslations.length !== 1 ? 's' : ''}
+                </Text>
+              </View>
             </View>
           </View>
 
           {/* Search Input */}
           <View style={[
             styles.searchContainer,
-            { backgroundColor: isDark ? 'rgba(26, 26, 46, 0.8)' : 'rgba(255, 255, 255, 0.9)' }
+            { backgroundColor: theme.colors.card }
           ]}>
             <Ionicons name="search" size={20} color={theme.colors.textTertiary} />
             <TextInput
@@ -246,17 +222,13 @@ export default function HistoryScreen() {
                 activeFilter === 'all' && styles.filterButtonActive
               ]}
             >
-              {activeFilter === 'all' ? (
-                <LinearGradient
-                  colors={['#6366F1', '#8B5CF6']}
-                  style={StyleSheet.absoluteFill}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                />
-              ) : null}
               <View style={[
                 styles.filterContent,
-                { backgroundColor: activeFilter !== 'all' ? (isDark ? 'rgba(26, 26, 46, 0.6)' : 'rgba(255, 255, 255, 0.8)') : 'transparent' }
+                {
+                  backgroundColor: activeFilter === 'all'
+                    ? theme.colors.primary
+                    : (theme.colors.card + (isDark ? '99' : 'CC'))
+                }
               ]}>
                 <Ionicons
                   name="list"
@@ -279,17 +251,13 @@ export default function HistoryScreen() {
                 activeFilter === 'favorites' && styles.filterButtonActive
               ]}
             >
-              {activeFilter === 'favorites' ? (
-                <LinearGradient
-                  colors={['#F59E0B', '#F97316']}
-                  style={StyleSheet.absoluteFill}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                />
-              ) : null}
               <View style={[
                 styles.filterContent,
-                { backgroundColor: activeFilter !== 'favorites' ? (isDark ? 'rgba(26, 26, 46, 0.6)' : 'rgba(255, 255, 255, 0.8)') : 'transparent' }
+                {
+                  backgroundColor: activeFilter === 'favorites'
+                    ? theme.colors.warning
+                    : (theme.colors.card + (isDark ? '99' : 'CC'))
+                }
               ]}>
                 <Ionicons
                   name="star"
@@ -317,7 +285,7 @@ export default function HistoryScreen() {
             <View style={styles.emptyContainer}>
               <View style={[
                 styles.emptyIconContainer,
-                { backgroundColor: isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.1)' }
+                { backgroundColor: theme.colors.primary + (isDark ? '26' : '1A') }
               ]}>
                 <Ionicons
                   name={activeFilter === 'favorites' ? 'star-outline' : 'document-text-outline'}
@@ -356,26 +324,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
-  orbContainer: {
-    ...StyleSheet.absoluteFillObject,
-    overflow: 'hidden',
-  },
-  orb: {
-    position: 'absolute',
-    borderRadius: 999,
-  },
-  orb1: {
-    width: 280,
-    height: 280,
-    top: -80,
-    left: -100,
-  },
-  orb2: {
-    width: 220,
-    height: 220,
-    bottom: 150,
-    right: -60,
-  },
   header: {
     padding: 20,
     paddingBottom: 16,
@@ -387,8 +335,8 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   headerTitle: {
-    fontSize: 32,
-    fontWeight: '800',
+    fontSize: 28,
+    fontWeight: '700',
     letterSpacing: -0.5,
   },
   headerSubtitle: {
@@ -419,7 +367,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   filterButtonActive: {
-    shadowColor: '#6366F1',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,

@@ -2,8 +2,22 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Translation } from '../types';
 
-const PAGE_SIZE = 20; // Sayfa başına öğe sayısı
-const MAX_HISTORY_ITEMS = 500; // Maksimum saklanacak çeviri sayısı
+const PAGE_SIZE = 20;
+const MAX_HISTORY_ITEMS = 500;
+
+// Debounced AsyncStorage write to prevent UI jank on rapid translations
+let pendingWrite: NodeJS.Timeout | null = null;
+const WRITE_DEBOUNCE_MS = 2000;
+
+function debouncedPersist(translations: Translation[]) {
+  if (pendingWrite) clearTimeout(pendingWrite);
+  pendingWrite = setTimeout(() => {
+    AsyncStorage.setItem('translations', JSON.stringify(translations)).catch(
+      (error) => console.error('History persist error:', error)
+    );
+    pendingWrite = null;
+  }, WRITE_DEBOUNCE_MS);
+}
 
 interface HistoryState {
   translations: Translation[];
@@ -38,17 +52,17 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         timestamp: Date.now(),
       };
 
-      // Maksimum sayıyı aşmamak için eski çevirileri sil
       let translations = [newTranslation, ...get().translations];
       if (translations.length > MAX_HISTORY_ITEMS) {
         translations = translations.slice(0, MAX_HISTORY_ITEMS);
       }
 
-      await AsyncStorage.setItem('translations', JSON.stringify(translations));
+      // Update state immediately, persist with debounce to prevent jank
       set({
         translations,
         hasMore: translations.length > PAGE_SIZE * get().currentPage,
       });
+      debouncedPersist(translations);
     } catch (error) {
       console.error('Add translation error:', error);
     }
@@ -81,10 +95,14 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       const favorites = get().translations.filter(t => t.isFavorite);
       if (favorites.length > 0) {
         await AsyncStorage.setItem('translations', JSON.stringify(favorites));
-        set({ translations: favorites });
+        set({
+          translations: favorites,
+          currentPage: 1,
+          hasMore: favorites.length > PAGE_SIZE,
+        });
       } else {
         await AsyncStorage.removeItem('translations');
-        set({ translations: [] });
+        set({ translations: [], currentPage: 1, hasMore: false });
       }
     } catch (error) {
       console.error('Clear history error:', error);

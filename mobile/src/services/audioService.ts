@@ -9,12 +9,12 @@ const VAD_CONFIG = {
   SILENCE_THRESHOLD: -50, // dB threshold for silence detection (more sensitive)
   SPEECH_THRESHOLD: -40, // dB threshold for definite speech
 
-  // Timing configuration - longer segments for better context
-  SILENCE_DURATION_MS: 800, // Longer pause before segment ends
-  SPEECH_START_DELAY_MS: 100, // Delay before confirming speech start
-  MIN_SEGMENT_DURATION_MS: 500, // Minimum segment length
+  // Timing configuration - optimized for speed
+  SILENCE_DURATION_MS: 350, // Short pause before segment ends (snappy for conversation)
+  SPEECH_START_DELAY_MS: 40, // Faster speech start confirmation
+  MIN_SEGMENT_DURATION_MS: 250, // Allow shorter segments for quick responses
   MAX_SEGMENT_DURATION_MS: 10000, // Allow longer segments (10 seconds)
-  METERING_INTERVAL_MS: 100, // Less frequent metering to reduce overhead
+  METERING_INTERVAL_MS: 50, // 2x more responsive VAD (was 100)
 
   // Audio overlap for boundary word preservation
   OVERLAP_DURATION_MS: 300, // Overlap with previous segment to catch boundary words
@@ -653,8 +653,8 @@ class AudioService {
         this.recording = null;
       }
 
-      // Small delay to ensure audio system is ready
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Minimal delay to ensure audio system is ready
+      await new Promise(resolve => setTimeout(resolve, 30));
 
       // Create recording with optimized settings for speech
       const { recording } = await Audio.Recording.createAsync(

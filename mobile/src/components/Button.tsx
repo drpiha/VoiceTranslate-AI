@@ -1,6 +1,5 @@
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, ViewStyle, TextStyle } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, ViewStyle } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useSettingsStore } from '../store/settingsStore';
 import { useColorScheme } from 'react-native';
@@ -30,9 +29,9 @@ export const Button: React.FC<ButtonProps> = ({
   style,
 }) => {
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback } = useSettingsStore();
+  const { theme: themePreference, hapticFeedback, colorScheme: colorSchemePref } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   const handlePress = () => {
     if (!disabled && !isLoading) {
@@ -43,41 +42,33 @@ export const Button: React.FC<ButtonProps> = ({
     }
   };
 
-  const buttonHeight = size === 'sm' ? 40 : size === 'lg' ? 56 : 48;
+  const buttonHeight = size === 'sm' ? 44 : size === 'lg' ? 56 : 48;
   const fontSize = size === 'sm' ? 14 : size === 'lg' ? 18 : 16;
 
-  if (variant === 'primary') {
-    return (
-      <TouchableOpacity
-        onPress={handlePress}
-        disabled={disabled || isLoading}
-        style={[
-          styles.button,
-          { height: buttonHeight },
-          fullWidth && styles.fullWidth,
-          (disabled || isLoading) && styles.disabled,
-          style,
-        ]}
-        activeOpacity={0.8}
-      >
-        <LinearGradient
-          colors={[theme.colors.gradient1, theme.colors.gradient2]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.gradient}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <>
-              {icon}
-              <Text style={[styles.text, { fontSize, color: '#FFFFFF' }]}>{title}</Text>
-            </>
-          )}
-        </LinearGradient>
-      </TouchableOpacity>
-    );
-  }
+  const getVariantStyle = () => {
+    switch (variant) {
+      case 'primary':
+        return { backgroundColor: theme.colors.primary };
+      case 'secondary':
+        return { backgroundColor: theme.colors.surface };
+      case 'outline':
+        return { backgroundColor: 'transparent', borderWidth: 2, borderColor: theme.colors.primary };
+      case 'ghost':
+        return { backgroundColor: 'transparent' };
+    }
+  };
+
+  const getTextColor = () => {
+    switch (variant) {
+      case 'primary':
+        return '#FFFFFF';
+      case 'outline':
+      case 'ghost':
+        return theme.colors.primary;
+      default:
+        return theme.colors.text;
+    }
+  };
 
   return (
     <TouchableOpacity
@@ -85,32 +76,20 @@ export const Button: React.FC<ButtonProps> = ({
       disabled={disabled || isLoading}
       style={[
         styles.button,
-        { height: buttonHeight },
-        variant === 'secondary' && { backgroundColor: theme.colors.surface },
-        variant === 'outline' && { backgroundColor: 'transparent', borderWidth: 2, borderColor: theme.colors.primary },
-        variant === 'ghost' && { backgroundColor: 'transparent' },
+        { height: buttonHeight, ...theme.shadows.md },
+        getVariantStyle(),
         fullWidth && styles.fullWidth,
         (disabled || isLoading) && styles.disabled,
         style,
       ]}
-      activeOpacity={0.7}
+      activeOpacity={variant === 'primary' ? 0.8 : 0.7}
     >
       {isLoading ? (
-        <ActivityIndicator color={theme.colors.primary} />
+        <ActivityIndicator color={variant === 'primary' ? '#FFFFFF' : theme.colors.primary} />
       ) : (
         <>
           {icon}
-          <Text
-            style={[
-              styles.text,
-              {
-                fontSize,
-                color: variant === 'outline' || variant === 'ghost' ? theme.colors.primary : theme.colors.text,
-              },
-            ]}
-          >
-            {title}
-          </Text>
+          <Text style={[styles.text, { fontSize, color: getTextColor() }]}>{title}</Text>
         </>
       )}
     </TouchableOpacity>
@@ -119,12 +98,9 @@ export const Button: React.FC<ButtonProps> = ({
 
 const styles = StyleSheet.create({
   button: {
-    borderRadius: 12,
+    borderRadius: 14,
     overflow: 'hidden',
     alignSelf: 'flex-start',
-  },
-  gradient: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

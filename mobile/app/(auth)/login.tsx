@@ -42,10 +42,10 @@ export default function LoginScreen() {
   const [authProcessing, setAuthProcessing] = useState(false);
   const authProcessingRef = useRef(false); // Ref for immediate synchronous checking
   const colorScheme = useColorScheme();
-  const { theme: themePreference } = useSettingsStore();
+  const { theme: themePreference, colorScheme: colorSchemePref } = useSettingsStore();
   const { login, setUser } = useUserStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   // Google Auth hook
   const { request, response, promptAsync } = useGoogleAuth();
@@ -316,7 +316,7 @@ export default function LoginScreen() {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Send',
-          onPress: async (inputEmail) => {
+          onPress: async (inputEmail: string | undefined) => {
             if (!inputEmail?.trim()) {
               Alert.alert('Error', 'Please enter your email');
               return;
@@ -464,19 +464,17 @@ export default function LoginScreen() {
           </View>
 
           {/* Sign In Button */}
-          <TouchableOpacity onPress={handleLogin} disabled={isLoading} activeOpacity={0.8}>
-            <LinearGradient
-              colors={[theme.colors.gradient1, theme.colors.gradient2]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.signInButton}
-            >
-              {isLoading ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <Text style={styles.signInButtonText}>Sign In</Text>
-              )}
-            </LinearGradient>
+          <TouchableOpacity
+            onPress={handleLogin}
+            disabled={isLoading}
+            activeOpacity={0.8}
+            style={[styles.signInButton, { backgroundColor: theme.colors.primary }]}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={styles.signInButtonText}>Sign In</Text>
+            )}
           </TouchableOpacity>
 
           {/* Sign Up Link */}
@@ -641,7 +639,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#6366F1',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,

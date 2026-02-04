@@ -5,12 +5,13 @@ import {
   StyleSheet,
   Animated,
   Easing,
+  TouchableOpacity,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Theme } from '../constants/theme';
 
 const RTL_LANGUAGES = ['ar', 'he', 'fa', 'ur'];
 
-// Animated typing dots for current segment
 const TypingDots = ({ color }: { color: string }) => {
   const dot1 = useRef(new Animated.Value(0.4)).current;
   const dot2 = useRef(new Animated.Value(0.4)).current;
@@ -58,6 +59,8 @@ interface ConversationBubbleProps {
   isLatest?: boolean;
   animateIn?: boolean;
   flag?: string;
+  onSpeak?: (text: string, lang: string) => void;
+  showSpeakButton?: boolean;
 }
 
 export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
@@ -72,10 +75,11 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
   isLatest = false,
   animateIn = true,
   flag,
+  onSpeak,
+  showSpeakButton = false,
 }) => {
   const fadeAnim = useRef(new Animated.Value(animateIn ? 0 : 1)).current;
-  // Slide in from the side: own speech from right, other's from left
-  const slideAnim = useRef(new Animated.Value(animateIn ? (isOwnSpeech ? 40 : -40) : 0)).current;
+  const slideAnim = useRef(new Animated.Value(animateIn ? (isOwnSpeech ? 30 : -30) : 0)).current;
 
   const isTranslatedRtl = RTL_LANGUAGES.includes(translatedLang);
   const isOriginalRtl = RTL_LANGUAGES.includes(originalLang);
@@ -85,14 +89,14 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
       Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 300,
+          duration: 250,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.spring(slideAnim, {
           toValue: 0,
-          tension: 60,
-          friction: 9,
+          tension: 80,
+          friction: 10,
           useNativeDriver: true,
         }),
       ]).start();
@@ -100,8 +104,7 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
   }, [animateIn]);
 
   const bubbleAlignment = isOwnSpeech ? 'flex-end' : 'flex-start';
-  const accentColor = speaker === 'A' ? theme.colors.accent : theme.colors.secondary;
-  const bubbleBg = accentColor + '12';
+  const accentColor = speaker === 'A' ? theme.colors.primary : theme.colors.accent;
 
   return (
     <Animated.View
@@ -114,11 +117,20 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
         },
       ]}
     >
+      {/* Clean bubble - no colored background, just subtle border */}
       <View style={[
         styles.bubble,
-        { backgroundColor: bubbleBg },
+        {
+          backgroundColor: isOwnSpeech
+            ? (theme.colors.surface)
+            : (theme.colors.card),
+          borderLeftColor: isOwnSpeech ? 'transparent' : accentColor,
+          borderLeftWidth: isOwnSpeech ? 0 : 2,
+          borderRightColor: isOwnSpeech ? accentColor : 'transparent',
+          borderRightWidth: isOwnSpeech ? 2 : 0,
+        },
       ]}>
-        {/* Main translated text */}
+        {/* Main text */}
         <Text
           style={[
             styles.mainText,
@@ -127,12 +139,13 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
               textAlign: isTranslatedRtl ? 'right' : 'left',
             },
           ]}
+          selectable
         >
           {translatedText}
         </Text>
         {isCurrent && <TypingDots color={accentColor} />}
 
-        {/* Original text (small, muted) */}
+        {/* Original text */}
         {originalText && originalText !== translatedText && (
           <Text
             style={[
@@ -146,6 +159,17 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
             {flag ? `${flag} ` : ''}{originalText}
           </Text>
         )}
+
+        {/* Speak button */}
+        {showSpeakButton && translatedText && !isCurrent && onSpeak && (
+          <TouchableOpacity
+            onPress={() => onSpeak(translatedText, translatedLang)}
+            style={[styles.speakBtn, { alignSelf: isOwnSpeech ? 'flex-start' : 'flex-end' }]}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="chatbubble-ellipses-outline" size={16} color={accentColor} />
+          </TouchableOpacity>
+        )}
       </View>
     </Animated.View>
   );
@@ -157,25 +181,24 @@ const styles = StyleSheet.create({
     marginVertical: 3,
   },
   bubble: {
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 2,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   mainText: {
-    fontSize: 16,
+    fontSize: 17,
     lineHeight: 24,
-    fontWeight: '500',
+    fontWeight: '400',
   },
   originalText: {
-    fontSize: 11,
-    lineHeight: 18,
-    marginTop: 6,
+    fontSize: 14,
+    lineHeight: 19,
+    marginTop: 5,
     fontStyle: 'italic',
+  },
+  speakBtn: {
+    marginTop: 6,
+    padding: 4,
   },
   dotsContainer: {
     flexDirection: 'row',

@@ -19,9 +19,9 @@ export const TranslationCard: React.FC<TranslationCardProps> = ({
   onToggleFavorite,
 }) => {
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback } = useSettingsStore();
+  const { theme: themePreference, hapticFeedback, colorScheme: colorSchemePref } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   const handleFavoritePress = () => {
     if (hapticFeedback) {

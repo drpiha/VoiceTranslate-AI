@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useColorScheme, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
+
 import { createTheme } from '../src/constants/theme';
 import { useSettingsStore } from '../src/store/settingsStore';
 import { subscriptionAPI } from '../src/services/api';
@@ -21,9 +21,9 @@ interface Plan {
 export default function SubscriptionScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
-  const { theme: themePreference } = useSettingsStore();
+  const { theme: themePreference, colorScheme: colorSchemePref } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark);
+  const theme = createTheme(isDark, colorSchemePref);
 
   const [plans, setPlans] = useState<Plan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -172,22 +172,15 @@ export default function SubscriptionScreen() {
             <Text style={[styles.currentPlanText, { color: theme.colors.textSecondary }]}>Current Plan</Text>
           </View>
         ) : plan.isPopular ? (
-          <LinearGradient
-            colors={[theme.colors.gradient1, theme.colors.gradient2]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.subscribeButtonGradient}
+          <TouchableOpacity
+            onPress={() => handleSubscribe(plan.id)}
+            disabled={isSubscribing}
+            style={[styles.subscribeButton, { backgroundColor: theme.colors.primary }]}
           >
-            <TouchableOpacity
-              onPress={() => handleSubscribe(plan.id)}
-              disabled={isSubscribing}
-              style={styles.subscribeButtonInner}
-            >
-              <Text style={styles.subscribeButtonText}>
-                {isSubscribing ? 'Processing...' : 'Subscribe Now'}
-              </Text>
-            </TouchableOpacity>
-          </LinearGradient>
+            <Text style={styles.subscribeButtonText}>
+              {isSubscribing ? 'Processing...' : 'Subscribe Now'}
+            </Text>
+          </TouchableOpacity>
         ) : (
           <TouchableOpacity
             onPress={() => handleSubscribe(plan.id)}

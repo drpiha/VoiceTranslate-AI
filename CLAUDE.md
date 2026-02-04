@@ -54,7 +54,7 @@ npm run lint             # ESLint
 - JWT auth with access tokens (15 min) and refresh tokens (7 days)
 - Zod for request validation in `src/middleware/validateRequest.ts`
 - Subscription tiers: free, basic, premium, enterprise with usage limits
-- Mock AI services enabled by default (`USE_MOCK_AI_SERVICES=true`)
+- Mock AI services must be disabled by default (`USE_MOCK_AI_SERVICES=false`)
 
 ## Mobile (React Native + Expo)
 
@@ -108,6 +108,58 @@ npm run web              # Start web version
 - `SubscriptionReceipt` - Apple/Google receipt verification
 - `SupportedLanguage` - language configuration with TTS/STT support flags
 
+## Production Deployment (Hostinger VPS)
+
+### Infrastructure
+- **VPS**: Hostinger KVM2 at `72.62.0.111` (SSH: `ssh root@72.62.0.111`)
+- **API URL**: `https://api.srv1150632.hstgr.cloud`
+- **WebSocket**: `wss://api.srv1150632.hstgr.cloud/ws/translate`
+- **SSL**: Let's Encrypt via Traefik (auto-renewal)
+- **Database**: PostgreSQL 15 (Docker container)
+- **n8n**: Also running on same VPS at `https://n8n.srv1150632.hstgr.cloud`
+
+### Docker Services (on VPS at /root/docker-compose.yml)
+- `traefik` - Reverse proxy + SSL (ports 80, 443)
+- `n8n` - Workflow automation
+- `postgres` - PostgreSQL database
+- `voicetranslate-backend` - Backend API (port 3000 internal)
+
+### VPS Commands
+```bash
+ssh root@72.62.0.111
+
+# Docker management
+docker compose ps                              # Status
+docker logs voicetranslate-backend --tail 50   # Logs
+docker compose restart voicetranslate          # Restart
+docker compose up -d --build voicetranslate    # Rebuild + restart
+docker compose up -d --force-recreate voicetranslate  # Force recreate
+
+# Backend env file
+/opt/voicetranslate/backend/.env
+
+# Backend code
+/opt/voicetranslate/backend/
+```
+
+### Active AI Services
+- **STT**: Groq Whisper (GROQ_API_KEY)
+- **Translation**: OpenRouter GPT-4o-mini (OPENROUTER_API_KEY)
+- **TTS**: Mock mode (no API key configured)
+- **Google OAuth**: 3 client IDs configured (web, android, ios)
+
+### Mobile App Config
+- API URL configured in `mobile/src/config/api.config.ts`
+- `USE_PRODUCTION_IN_DEV = true` forces production backend even in dev mode
+- EAS Build profile: `preview` for Android APK
+- APK build has Windows path length issues locally; use EAS cloud builds
+
+### Known Issues
+- Local Android gradle build fails on Windows (path length + expo-modules-core error)
+- Use `npx eas build --platform android --profile preview` for APK builds
+- Google OAuth SHA-1 fingerprint may need updating for EAS signing key
+- TTS service runs in mock mode (needs Google Cloud TTS API key)
+
 ## Environment Setup
 
 Backend requires `.env` file (copy from `.env.example`):
@@ -115,3 +167,16 @@ Backend requires `.env` file (copy from `.env.example`):
 - `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` - min 32 chars each
 - `ENCRYPTION_KEY` - for encrypting sensitive data
 - AI service keys (optional with mock mode enabled)
+
+## Development Roadmap
+
+See `ROADMAP.md` for full milestone tracking. Current status:
+- [x] Milestone 1: Repo Audit
+- [x] Milestone 2: VPS Hardening + Docker + SSL
+- [x] Milestone 3: Backend Deploy + DNS Cutover
+- [ ] Milestone 4: Realtime Pipeline Upgrades
+- [ ] Milestone 5: Google Login Reliability Fix
+- [ ] Milestone 6: Frontend UX Redesign (5 tabs: Live, Conversation, Text, History, Settings)
+- [ ] Milestone 7: Testing Automation
+- [ ] Milestone 8: Security Audit + Fixes
+- [ ] Milestone 9: Release Readiness

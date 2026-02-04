@@ -24,8 +24,14 @@ export interface User {
 export type VadSensitivity = 'low' | 'medium' | 'high';
 export type TranslationProvider = 'backend' | 'deepl';
 
+export type ColorScheme = 'indigo' | 'ocean' | 'sunset' | 'rose' | 'emerald' | 'lavender';
+
+export type FontSize = 'small' | 'medium' | 'large';
+
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
+  colorScheme: ColorScheme;
+  fontSize: FontSize;
   sourceLanguage: string;
   targetLanguage: string;
   autoPlayTranslation: boolean;
@@ -34,6 +40,8 @@ export interface AppSettings {
   vadSensitivity: VadSensitivity;
   translationProvider: TranslationProvider;
   deeplApiKey: string;
+  converseTts: boolean;
+  faceToFaceMode: boolean;
 }
 
 export interface SubscriptionPlan {

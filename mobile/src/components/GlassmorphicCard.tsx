@@ -9,11 +9,12 @@ interface GlassmorphicCardProps {
   borderWidth?: number;
 }
 
+// Kept name for backward compatibility, but defaults updated to solid card style
 export const GlassmorphicCard: React.FC<GlassmorphicCardProps> = ({
   children,
   style,
-  borderColor = 'rgba(99, 102, 241, 0.2)',
-  backgroundColor = 'rgba(26, 26, 46, 0.8)',
+  borderColor = 'rgba(0, 0, 0, 0.06)',
+  backgroundColor = '#FFFFFF',
   borderWidth = 1,
 }) => {
   return (
@@ -37,5 +38,10 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 16,
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
   },
 });

@@ -21,7 +21,15 @@ import ReAnimated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme } from '../constants/theme';
+import { useSettingsStore } from '../store/settingsStore';
+import { FontSize } from '../types';
 import { useDebouncedSpeaking } from '../hooks/useDebouncedSpeaking';
+
+const FONT_SIZE_MAP: Record<FontSize, { source: number; translation: number; sourceLineHeight: number; translationLineHeight: number }> = {
+  small: { source: 16, translation: 18, sourceLineHeight: 24, translationLineHeight: 28 },
+  medium: { source: 20, translation: 22, sourceLineHeight: 32, translationLineHeight: 34 },
+  large: { source: 24, translation: 26, sourceLineHeight: 36, translationLineHeight: 40 },
+};
 
 const RTL_LANGUAGES = ['ar', 'he', 'fa', 'ur'];
 
@@ -188,6 +196,32 @@ const TypingDots = ({ color }: { color: string }) => {
   );
 };
 
+// Pulsing Empty State Icon component
+const PulsingEmptyIcon = ({ color }: { color: string }) => {
+  const pulseOpacity = useSharedValue(0.4);
+
+  useEffect(() => {
+    pulseOpacity.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 1500 }),
+        withTiming(0.4, { duration: 1500 })
+      ),
+      -1,
+      false
+    );
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: pulseOpacity.value,
+  }));
+
+  return (
+    <ReAnimated.View style={animatedStyle}>
+      <Ionicons name="document-text-outline" size={40} color={color} />
+    </ReAnimated.View>
+  );
+};
+
 // Shimmer Loading Bars component
 const ShimmerBars = ({ accentColor }: { accentColor: string }) => {
   const translateX = useSharedValue(-200);
@@ -204,7 +238,7 @@ const ShimmerBars = ({ accentColor }: { accentColor: string }) => {
     transform: [{ translateX: translateX.value }],
   }));
 
-  const bars = [
+  const bars: { width: `${number}%`; height: number }[] = [
     { width: '85%', height: 14 },
     { width: '65%', height: 14 },
     { width: '45%', height: 14 },
@@ -220,7 +254,7 @@ const ShimmerBars = ({ accentColor }: { accentColor: string }) => {
             {
               width: bar.width,
               height: bar.height,
-              backgroundColor: accentColor + '15',
+              backgroundColor: accentColor + '0A',
               marginBottom: index < bars.length - 1 ? 10 : 0,
             },
           ]}
@@ -250,12 +284,10 @@ interface TranscriptPanelProps {
   // Content
   finalizedSentences: FinalizedSentence[];
   currentSegment: CurrentSegment | null;
-  // Panel state
-  isExpanded: boolean;
-  isOtherExpanded: boolean;
-  onToggleExpand: () => void;
   // Appearance
   accentColor: string;
+  // Drag-to-resize handlers (spread onto header)
+  panHandlers?: any;
   // Live state indicators
   isUpdating?: boolean;
   isListening?: boolean;
@@ -281,10 +313,8 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
   languageFlag,
   finalizedSentences,
   currentSegment,
-  isExpanded,
-  isOtherExpanded,
-  onToggleExpand,
   accentColor,
+  panHandlers,
   isUpdating = false,
   isListening = false,
   isSpeaking = false,
@@ -300,27 +330,15 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
   const scrollRef = useRef<ScrollView>(null);
   const isAtBottom = useRef(true);
 
+  // Font size from settings
+  const fontSize = useSettingsStore((s) => s.fontSize);
+  const fontSizes = FONT_SIZE_MAP[fontSize] || FONT_SIZE_MAP.medium;
+
   // Debounced speaking state to prevent flickering
   const displaySpeaking = useDebouncedSpeaking(isSpeaking, isListening, 500);
 
   // Current segment pulse animation
   const currentSegmentOpacity = useSharedValue(1);
-
-  // Animated flex for smooth panel expansion
-  const flexValue = useSharedValue(1);
-  useEffect(() => {
-    if (isExpanded) {
-      flexValue.value = withTiming(3, { duration: 300 });
-    } else if (isOtherExpanded) {
-      flexValue.value = withTiming(0.5, { duration: 300 });
-    } else {
-      flexValue.value = withTiming(1, { duration: 300 });
-    }
-  }, [isExpanded, isOtherExpanded]);
-
-  const animatedFlexStyle = useAnimatedStyle(() => ({
-    flex: flexValue.value,
-  }));
 
   const currentText = currentSegment?.[field] || '';
   const hasContent = hasContentProp ?? (finalizedSentences.length > 0 || currentText.length > 0);
@@ -364,14 +382,13 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
   const sentenceCount = finalizedSentences.length + (currentText ? 1 : 0);
 
   return (
-    <ReAnimated.View style={[
+    <View style={[
       styles.panel,
-      animatedFlexStyle,
       { backgroundColor: theme.colors.card, borderColor: accentColor + '30' },
     ]}>
-      {/* Panel Header */}
-      <View style={styles.panelHeader}>
-        <View style={[styles.panelBadge, { backgroundColor: accentColor + '15' }]}>
+      {/* Panel Header (draggable for resize) */}
+      <View style={styles.panelHeader} {...(panHandlers || {})}>
+        <View style={[styles.panelBadge, { backgroundColor: accentColor + '0A' }]}>
           <Text style={styles.panelFlag}>{languageFlag}</Text>
           <Text style={[styles.panelLangName, { color: accentColor }]}>
             {languageName}
@@ -386,13 +403,13 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
           )}
         </View>
         <View style={styles.panelActions}>
-          <TouchableOpacity onPress={onToggleExpand} style={styles.actionBtn}>
-            <Ionicons
-              name={isExpanded ? 'contract-outline' : 'expand-outline'}
-              size={16}
-              color={theme.colors.textTertiary}
-            />
-          </TouchableOpacity>
+          {panHandlers && (
+            <View style={styles.dragIndicator}>
+              <View style={[styles.dragDot, { backgroundColor: theme.colors.textTertiary }]} />
+              <View style={[styles.dragDot, { backgroundColor: theme.colors.textTertiary }]} />
+              <View style={[styles.dragDot, { backgroundColor: theme.colors.textTertiary }]} />
+            </View>
+          )}
           {onClear && hasContent && (
             <TouchableOpacity onPress={onClear} style={styles.actionBtn}>
               <Ionicons name="trash-outline" size={16} color={theme.colors.textTertiary} />
@@ -400,6 +417,9 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
           )}
         </View>
       </View>
+
+      {/* Header divider */}
+      <View style={{ height: 1, backgroundColor: theme.colors.borderLight }} />
 
       {/* Panel Content */}
       <ScrollView
@@ -412,35 +432,58 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
       >
         {hasContent ? (
           <View style={styles.textContainer}>
-            {/* Finalized sentences */}
-            {finalizedSentences.map((sentence) => (
-              <ReAnimated.Text
-                key={sentence.id}
-                entering={FadeInUp.duration(300).springify()}
+            {/* Finalized sentences (neutral coloring) */}
+            {finalizedSentences.map((sentence, index) => (
+              <React.Fragment key={sentence.id}>
+                <ReAnimated.Text
+                  entering={FadeInUp.duration(300).springify()}
+                  style={[
+                    styles.panelText,
+                    field === 'translation' ? styles.translationText : styles.sourceText,
+                    styles.finalizedText,
+                    {
+                      color: theme.colors.text,
+                      textAlign: isRtl ? 'right' : 'left',
+                      fontSize: field === 'translation' ? fontSizes.translation : fontSizes.source,
+                      lineHeight: field === 'translation' ? fontSizes.translationLineHeight : fontSizes.sourceLineHeight,
+                    },
+                  ]}
+                >
+                  {sentence[field]}
+                </ReAnimated.Text>
+                {index < finalizedSentences.length - 1 && (
+                  <View style={[styles.sentenceDivider, { backgroundColor: theme.colors.border }]} />
+                )}
+              </React.Fragment>
+            ))}
+            {/* Current segment (colored, prominent) */}
+            {currentText ? (
+              <ReAnimated.View
                 style={[
-                  styles.panelText,
-                  field === 'translation' ? styles.translationText : styles.sourceText,
-                  styles.finalizedText,
-                  { color: theme.colors.text, textAlign: isRtl ? 'right' : 'left' },
+                  currentSegmentAnimatedStyle,
+                  styles.currentTextContainer,
+                  { backgroundColor: accentColor + '10' }
                 ]}
               >
-                {sentence[field]}
-              </ReAnimated.Text>
-            ))}
-            {/* Current segment */}
-            {currentText ? (
-              <ReAnimated.View style={currentSegmentAnimatedStyle}>
                 <Text
                   style={[
                     styles.panelText,
                     field === 'translation' ? styles.translationText : styles.sourceText,
                     styles.currentText,
-                    { color: accentColor, textAlign: isRtl ? 'right' : 'left' },
+                    {
+                      color: accentColor,
+                      textAlign: isRtl ? 'right' : 'left',
+                      borderLeftColor: accentColor,
+                      fontSize: field === 'translation' ? fontSizes.translation : fontSizes.source,
+                      lineHeight: field === 'translation' ? fontSizes.translationLineHeight : fontSizes.sourceLineHeight,
+                    },
                   ]}
                 >
                   {currentText}
                 </Text>
-                <TypingDots color={accentColor} />
+                <View style={{ paddingLeft: 12 }}>
+                  <TypingDots color={accentColor} />
+                </View>
               </ReAnimated.View>
             ) : null}
             {/* Processing shimmer bars */}
@@ -463,9 +506,12 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
                 </Text>
               </>
             ) : (
-              <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                {emptyText}
-              </Text>
+              <>
+                <PulsingEmptyIcon color={theme.colors.textTertiary} />
+                <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
+                  {emptyText}
+                </Text>
+              </>
             )}
           </View>
         )}
@@ -483,7 +529,7 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
           <Ionicons name="chevron-down" size={16} color="#FFF" />
         </TouchableOpacity>
       )}
-    </ReAnimated.View>
+    </View>
   );
 };
 
@@ -493,7 +539,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     overflow: 'hidden',
-    minHeight: 120,
+    minHeight: 40,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
@@ -512,10 +558,10 @@ const styles = StyleSheet.create({
   panelBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    gap: 6,
   },
   panelFlag: {
     fontSize: 18,
@@ -563,7 +609,7 @@ const styles = StyleSheet.create({
   panelText: {
     fontSize: 20,
     lineHeight: 32,
-    letterSpacing: 0.2,
+    letterSpacing: 0.3,
   },
   sourceText: {
     fontWeight: '400',
@@ -574,10 +620,19 @@ const styles = StyleSheet.create({
     lineHeight: 34,
   },
   finalizedText: {
-    marginBottom: 14,
+    marginBottom: 8,
+    paddingLeft: 12,
   },
   currentText: {
     marginBottom: 8,
+    paddingLeft: 12,
+    paddingVertical: 10,
+    paddingRight: 8,
+    borderLeftWidth: 2,
+    borderRadius: 8,
+  },
+  currentTextContainer: {
+    borderRadius: 8,
   },
   typingDotsContainer: {
     flexDirection: 'row',
@@ -621,6 +676,28 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     letterSpacing: -0.2,
   },
+  emptyIcon: {
+    fontSize: 40,
+    marginBottom: 8,
+  },
+  dragIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  dragDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    opacity: 0.4,
+  },
+  sentenceDivider: {
+    height: 1,
+    marginVertical: 12,
+    opacity: 0.15,
+  },
   scrollToBottomBtn: {
     position: 'absolute',
     bottom: 10,
@@ -635,6 +712,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 4,
+    opacity: 0.9,
   },
   visualizerContainer: {
     flexDirection: 'row',
