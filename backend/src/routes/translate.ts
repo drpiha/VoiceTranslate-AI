@@ -256,6 +256,7 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
           language: string;
           gender?: 'MALE' | 'FEMALE';
           rate?: number;
+          voiceName?: string;
         };
 
         if (!body || !body.text) {
@@ -278,6 +279,7 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
           textLength: body.text.length,
           language: languageCode,
           gender: body.gender,
+          voiceName: body.voiceName,
         });
 
         const result = await ttsService.synthesize({
@@ -285,6 +287,7 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
           languageCode,
           gender: body.gender,
           speakingRate: body.rate,
+          voiceName: body.voiceName,
         });
 
         return reply.send({
@@ -302,6 +305,38 @@ export async function translateRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.code(500).send({
           success: false,
           error: 'Text-to-speech failed',
+          message: error.message,
+        });
+      }
+    }
+  );
+
+  /**
+   * GET /api/translate/voices
+   * Get available TTS voices for a language.
+   */
+  fastify.get(
+    '/voices',
+    {
+      preHandler: [authenticateOptional],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const query = request.query as { language?: string };
+        const voices = ttsService.getVoices(query.language);
+
+        return reply.send({
+          success: true,
+          data: {
+            voices,
+            total: voices.length,
+          },
+        });
+      } catch (error: any) {
+        logger.error('Get voices error', { error: error.message });
+        return reply.code(500).send({
+          success: false,
+          error: 'Failed to retrieve voices',
           message: error.message,
         });
       }

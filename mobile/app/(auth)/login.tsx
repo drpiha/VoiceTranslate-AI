@@ -135,7 +135,8 @@ export default function LoginScreen() {
           code: code,
           code_verifier: codeVerifier,
           grant_type: 'authorization_code',
-          redirect_uri: 'com.voicetranslate.ai:/oauthredirect',
+          // Use the same redirect URI that expo-auth-session uses
+          redirect_uri: `${GOOGLE_AUTH_CONFIG.androidClientId ? 'com.voicetranslate.ai' : 'https://auth.expo.io'}:/oauth2redirect/google`,
         }).toString(),
       }, 15000);
 
@@ -219,11 +220,12 @@ export default function LoginScreen() {
         await tokenStorage.setTokens(result.tokens.accessToken, result.tokens.refreshToken);
       }
 
-      // Set user
+      // Set user - map backend field names to app types
       await setUser({
         id: result.user.id,
         email: result.user.email,
-        name: result.user.name,
+        name: result.user.name || '',
+        profilePicture: result.user.profileImage,
         subscriptionTier: result.user.subscription || 'free',
       });
 

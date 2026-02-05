@@ -286,8 +286,6 @@ interface TranscriptPanelProps {
   currentSegment: CurrentSegment | null;
   // Appearance
   accentColor: string;
-  // Drag-to-resize handlers (spread onto header)
-  panHandlers?: any;
   // Live state indicators
   isUpdating?: boolean;
   isListening?: boolean;
@@ -314,7 +312,6 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
   finalizedSentences,
   currentSegment,
   accentColor,
-  panHandlers,
   isUpdating = false,
   isListening = false,
   isSpeaking = false,
@@ -386,8 +383,8 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
       styles.panel,
       { backgroundColor: theme.colors.card, borderColor: accentColor + '30' },
     ]}>
-      {/* Panel Header (draggable for resize) */}
-      <View style={styles.panelHeader} {...(panHandlers || {})}>
+      {/* Panel Header */}
+      <View style={styles.panelHeader}>
         <View style={[styles.panelBadge, { backgroundColor: accentColor + '0A' }]}>
           <Text style={styles.panelFlag}>{languageFlag}</Text>
           <Text style={[styles.panelLangName, { color: accentColor }]}>
@@ -403,13 +400,6 @@ export const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
           )}
         </View>
         <View style={styles.panelActions}>
-          {panHandlers && (
-            <View style={styles.dragIndicator}>
-              <View style={[styles.dragDot, { backgroundColor: theme.colors.textTertiary }]} />
-              <View style={[styles.dragDot, { backgroundColor: theme.colors.textTertiary }]} />
-              <View style={[styles.dragDot, { backgroundColor: theme.colors.textTertiary }]} />
-            </View>
-          )}
           {onClear && hasContent && (
             <TouchableOpacity onPress={onClear} style={styles.actionBtn}>
               <Ionicons name="trash-outline" size={16} color={theme.colors.textTertiary} />
@@ -679,19 +669,6 @@ const styles = StyleSheet.create({
   emptyIcon: {
     fontSize: 40,
     marginBottom: 8,
-  },
-  dragIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-  },
-  dragDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    opacity: 0.4,
   },
   sentenceDivider: {
     height: 1,

@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { sttService, STTResponse, StreamingSTTSession, AudioEncoding } from '../services/ai/stt.service.js';
 import { aiTranslationService } from '../services/ai/translation.service.js';
 import { ttsService } from '../services/ai/tts.service.js';
+import { punctuationService, hasSentenceEndingPunctuation } from '../services/ai/punctuation.service.js';
 import { verifyAccessToken, extractBearerToken } from '../utils/jwt.js';
 import { createLogger } from '../utils/logger.js';
 import { prisma } from '../lib/prisma.js';
@@ -642,16 +643,19 @@ const realtimeSessions = new Map<string, {
 }>();
 
 /**
- * Punctuation that indicates sentence end
- */
-const SENTENCE_ENDINGS = /[.!?。？！؟।]/;
-
-/**
- * Check if text ends with sentence-ending punctuation
+ * Check if text ends with sentence-ending punctuation.
+ * Uses the shared implementation from punctuation service for consistency.
+ * Supports comprehensive punctuation across major world languages:
+ * - Western: . ! ?
+ * - Chinese/Japanese: 。 ？ ！
+ * - Arabic: ؟
+ * - Hindi/Devanagari: ।
+ * - Urdu: ۔
+ * - Georgian: ჻
+ * - And more Unicode variants
  */
 function endsWithSentence(text: string): boolean {
-  const trimmed = text.trim();
-  return SENTENCE_ENDINGS.test(trimmed.charAt(trimmed.length - 1));
+  return hasSentenceEndingPunctuation(text);
 }
 
 /**
@@ -807,8 +811,32 @@ async function handleProcessSegment(
       return;
     }
 
-    const transcript = sttResult.transcript.trim();
+    let transcript = sttResult.transcript.trim();
     const detectedLang = sttResult.detectedLanguage || sourceLang;
+
+    // Apply AI punctuation if enabled and transcript lacks proper punctuation
+    // This improves readability when Whisper doesn't add punctuation marks
+    let punctuationTimeMs = 0;
+    if (punctuationService.isEnabled() && transcript.length > 0) {
+      const punctuationStart = Date.now();
+      const punctuationResult = await punctuationService.addPunctuation({
+        text: transcript,
+        languageCode: detectedLang,
+        context: contextPrompt,
+      });
+      punctuationTimeMs = Date.now() - punctuationStart;
+
+      if (punctuationResult.wasModified) {
+        logger.debug('Punctuation added to transcript', {
+          userId,
+          segmentId,
+          original: transcript.substring(0, 50),
+          punctuated: punctuationResult.punctuatedText.substring(0, 50),
+          timeMs: punctuationTimeMs,
+        });
+        transcript = punctuationResult.punctuatedText;
+      }
+    }
 
     // Check if this is a correction of the previous segment
     const isPotentialCorrection = isCorrection(session.lastSegmentText, transcript);
@@ -881,6 +909,9 @@ async function handleProcessSegment(
       session.currentSentence = '';
       session.currentSentenceId = 0;
 
+      // Calculate translation time (total - stt - punctuation)
+      const translationTimeMs = totalTime - sttTime - punctuationTimeMs;
+
       // Send final result
       sendMessage(ws, 'segment_result', {
         segmentId: sentenceSegmentId,
@@ -892,7 +923,8 @@ async function handleProcessSegment(
         isCorrection: isPotentialCorrection,
         processingTimeMs: totalTime,
         sttTimeMs: sttTime,
-        translationTimeMs: totalTime - sttTime,
+        punctuationTimeMs: punctuationTimeMs > 0 ? punctuationTimeMs : undefined,
+        translationTimeMs,
       });
 
     } else {
@@ -902,11 +934,15 @@ async function handleProcessSegment(
         session.currentSentenceId = segmentId;
       }
 
+      // Calculate translation time (total - stt - punctuation)
+      const translationTimeMs = totalTime - sttTime - punctuationTimeMs;
+
       logger.info('Partial segment processed', {
         userId,
         segmentId: sentenceSegmentId,
         currentSentence: fullText.substring(0, 50),
         sttTimeMs: sttTime,
+        punctuationTimeMs: punctuationTimeMs > 0 ? punctuationTimeMs : undefined,
         totalTimeMs: totalTime,
       });
 
@@ -921,7 +957,8 @@ async function handleProcessSegment(
         isCorrection: isPotentialCorrection,
         processingTimeMs: totalTime,
         sttTimeMs: sttTime,
-        translationTimeMs: totalTime - sttTime,
+        punctuationTimeMs: punctuationTimeMs > 0 ? punctuationTimeMs : undefined,
+        translationTimeMs,
       });
     }
 

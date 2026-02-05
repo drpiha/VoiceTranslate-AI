@@ -219,9 +219,12 @@ export default function ConversationScreen() {
       });
 
       // TTS only after mic is stopped - read the complete translation
-      const ttsEnabled = useSettingsStore.getState().converseTts;
+      const settings = useSettingsStore.getState();
+      const ttsEnabled = settings.converseTts;
       if (ttsEnabled && translation) {
-        ttsService.speak(translation, targetLang).catch(console.error);
+        const voiceName = settings.voicePreferences[targetLang];
+        const gender = settings.voiceGender === 'male' ? 'MALE' : 'FEMALE';
+        ttsService.speak(translation, targetLang, { gender, voiceName }).catch(console.error);
       }
     }
 
@@ -454,7 +457,10 @@ export default function ConversationScreen() {
     if (ttsService.isPlaying()) {
       ttsService.stop();
     } else {
-      ttsService.speak(text, lang).catch(console.error);
+      const settings = useSettingsStore.getState();
+      const voiceName = settings.voicePreferences[lang];
+      const gender = settings.voiceGender === 'male' ? 'MALE' : 'FEMALE';
+      ttsService.speak(text, lang, { gender, voiceName }).catch(console.error);
     }
   }, []);
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Image,
   Platform,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -23,6 +24,7 @@ import { useHistoryStore } from '../../src/store/historyStore';
 import { ColorScheme, FontSize } from '../../src/types';
 import * as Haptics from 'expo-haptics';
 import { useNavigationStore } from '../../src/store/navigationStore';
+import { ttsService } from '../../src/services/ttsService';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -37,6 +39,10 @@ export default function SettingsScreen() {
     translationProvider,
     deeplApiKey,
     converseTts,
+    voiceGender,
+    voiceTone,
+    targetLanguage,
+    voicePreferences,
     setTheme,
     setColorScheme,
     setFontSize,
@@ -46,12 +52,18 @@ export default function SettingsScreen() {
     setTranslationProvider,
     setDeeplApiKey,
     setConverseTts,
+    setVoiceGender,
+    setVoiceTone,
+    setVoiceForLanguage,
   } = useSettingsStore();
   const { user, logout } = useUserStore();
   const { clearHistory } = useHistoryStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
   const theme = createTheme(isDark, currentColorScheme);
   const [showDeeplKey, setShowDeeplKey] = useState(false);
+  const [voices, setVoices] = useState<any[]>([]);
+  const [loadingVoices, setLoadingVoices] = useState(false);
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
 
   const handleLogout = () => {
     Alert.alert('Logout', 'Are you sure?', [
@@ -99,6 +111,49 @@ export default function SettingsScreen() {
       default:
         return 'phone-portrait';
     }
+  };
+
+  useEffect(() => {
+    loadVoices();
+  }, [targetLanguage]);
+
+  const loadVoices = async () => {
+    setLoadingVoices(true);
+    try {
+      const lang = targetLanguage === 'auto' ? 'en' : targetLanguage;
+      const availableVoices = await ttsService.getVoices(lang);
+      setVoices(availableVoices);
+    } catch (error) {
+      console.error('Failed to load voices:', error);
+    } finally {
+      setLoadingVoices(false);
+    }
+  };
+
+  const previewVoice = async (voiceName: string, gender: 'MALE' | 'FEMALE') => {
+    if (playingVoice === voiceName) {
+      await ttsService.stop();
+      setPlayingVoice(null);
+      return;
+    }
+
+    try {
+      setPlayingVoice(voiceName);
+      const sampleText = gender === 'MALE' ? 'Hello, this is a preview of the male voice.' : 'Hello, this is a preview of the female voice.';
+      await ttsService.speak(sampleText, targetLanguage === 'auto' ? 'en' : targetLanguage, { voiceName });
+      setTimeout(() => setPlayingVoice(null), 3000);
+    } catch (error) {
+      console.error('Voice preview failed:', error);
+      setPlayingVoice(null);
+    }
+  };
+
+  const selectVoice = async (voiceName: string) => {
+    if (hapticFeedback) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    const lang = targetLanguage === 'auto' ? 'en' : targetLanguage;
+    await setVoiceForLanguage(lang, voiceName);
   };
 
   return (
@@ -411,8 +466,269 @@ export default function SettingsScreen() {
             </View>
           </Animated.View>
 
-          {/* Translation Provider Section */}
+          {/* Voice Settings Section */}
           <Animated.View entering={FadeInDown.delay(175).springify()}>
+            <View style={[
+              styles.section,
+              { backgroundColor: theme.colors.card }
+            ]}>
+              <Text style={[styles.sectionTitle, { color: theme.colors.textTertiary }]}>
+                VOICE SETTINGS
+              </Text>
+
+              <View style={[styles.row, styles.rowBorder, { borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.accent + '26' }]}>
+                  <Ionicons name="person" size={20} color={theme.colors.accent} />
+                </View>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Voice Gender</Text>
+                  <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                    Choose preferred voice gender for translations
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.voiceGenderRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.voiceGenderButton,
+                    {
+                      backgroundColor: voiceGender === 'male'
+                        ? theme.colors.primary + '20'
+                        : isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                      borderColor: voiceGender === 'male' ? theme.colors.primary : 'transparent',
+                    },
+                  ]}
+                  onPress={() => {
+                    if (hapticFeedback) {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    setVoiceGender('male');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="male"
+                    size={28}
+                    color={voiceGender === 'male' ? theme.colors.primary : theme.colors.textSecondary}
+                  />
+                  <Text style={[
+                    styles.voiceGenderLabel,
+                    { color: voiceGender === 'male' ? theme.colors.primary : theme.colors.textSecondary },
+                    voiceGender === 'male' && { fontWeight: '700' },
+                  ]}>
+                    Male
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.voiceGenderButton,
+                    {
+                      backgroundColor: voiceGender === 'female'
+                        ? theme.colors.primary + '20'
+                        : isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                      borderColor: voiceGender === 'female' ? theme.colors.primary : 'transparent',
+                    },
+                  ]}
+                  onPress={() => {
+                    if (hapticFeedback) {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    setVoiceGender('female');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="female"
+                    size={28}
+                    color={voiceGender === 'female' ? theme.colors.primary : theme.colors.textSecondary}
+                  />
+                  <Text style={[
+                    styles.voiceGenderLabel,
+                    { color: voiceGender === 'female' ? theme.colors.primary : theme.colors.textSecondary },
+                    voiceGender === 'female' && { fontWeight: '700' },
+                  ]}>
+                    Female
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={[styles.row, styles.rowBorder, { borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', marginTop: 4 }]}>
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.info + '26' }]}>
+                  <Ionicons name="star" size={20} color={theme.colors.info} />
+                </View>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>Voice Tone</Text>
+                  <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                    Select formal or casual speaking style
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.voiceToneRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.voiceToneButton,
+                    {
+                      backgroundColor: voiceTone === 'formal'
+                        ? theme.colors.primary + '20'
+                        : isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                      borderColor: voiceTone === 'formal' ? theme.colors.primary : 'transparent',
+                    },
+                  ]}
+                  onPress={() => {
+                    if (hapticFeedback) {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    setVoiceTone('formal');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="business"
+                    size={24}
+                    color={voiceTone === 'formal' ? theme.colors.primary : theme.colors.textSecondary}
+                  />
+                  <Text style={[
+                    styles.voiceToneLabel,
+                    { color: voiceTone === 'formal' ? theme.colors.primary : theme.colors.textSecondary },
+                    voiceTone === 'formal' && { fontWeight: '700' },
+                  ]}>
+                    Formal
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.voiceToneButton,
+                    {
+                      backgroundColor: voiceTone === 'casual'
+                        ? theme.colors.primary + '20'
+                        : isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                      borderColor: voiceTone === 'casual' ? theme.colors.primary : 'transparent',
+                    },
+                  ]}
+                  onPress={() => {
+                    if (hapticFeedback) {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    setVoiceTone('casual');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="happy"
+                    size={24}
+                    color={voiceTone === 'casual' ? theme.colors.primary : theme.colors.textSecondary}
+                  />
+                  <Text style={[
+                    styles.voiceToneLabel,
+                    { color: voiceTone === 'casual' ? theme.colors.primary : theme.colors.textSecondary },
+                    voiceTone === 'casual' && { fontWeight: '700' },
+                  ]}>
+                    Casual
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={[styles.row, { marginTop: 4 }]}>
+                <View style={[styles.iconContainer, { backgroundColor: theme.colors.success + '26' }]}>
+                  <Ionicons name="mic" size={20} color={theme.colors.success} />
+                </View>
+                <View style={styles.rowTextContainer}>
+                  <Text style={[styles.rowText, { color: theme.colors.text }]}>
+                    Available Voices for {targetLanguage === 'auto' ? 'English' : targetLanguage.toUpperCase()}
+                  </Text>
+                  <Text style={[styles.rowSubtext, { color: theme.colors.textTertiary }]}>
+                    Tap to preview and select a voice
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={loadVoices} style={{ padding: 4 }}>
+                  <Ionicons name="refresh" size={20} color={theme.colors.primary} />
+                </TouchableOpacity>
+              </View>
+
+              {loadingVoices ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="small" color={theme.colors.primary} />
+                  <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>
+                    Loading voices...
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.voiceListContainer}>
+                  {voices
+                    .filter(v => v.gender === voiceGender.toUpperCase())
+                    .slice(0, 4)
+                    .map((voice, index) => {
+                      const isSelected = voicePreferences[targetLanguage === 'auto' ? 'en' : targetLanguage] === voice.name;
+                      const isPlaying = playingVoice === voice.name;
+                      return (
+                        <TouchableOpacity
+                          key={voice.name}
+                          style={[
+                            styles.voiceItem,
+                            {
+                              backgroundColor: isSelected
+                                ? theme.colors.primary + '15'
+                                : isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                              borderColor: isSelected ? theme.colors.primary : 'transparent',
+                            },
+                          ]}
+                          onPress={() => selectVoice(voice.name)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={styles.voiceItemContent}>
+                            <View style={[
+                              styles.voiceIconContainer,
+                              { backgroundColor: isSelected ? theme.colors.primary : theme.colors.textTertiary }
+                            ]}>
+                              <Ionicons
+                                name={voice.gender === 'MALE' ? 'male' : 'female'}
+                                size={16}
+                                color="#FFFFFF"
+                              />
+                            </View>
+                            <View style={styles.voiceInfo}>
+                              <Text style={[
+                                styles.voiceName,
+                                { color: isSelected ? theme.colors.primary : theme.colors.text },
+                                isSelected && { fontWeight: '700' }
+                              ]} numberOfLines={1}>
+                                {voice.name.split('-').pop()?.replace('Neural', '') || 'Voice'}
+                              </Text>
+                              <Text style={[styles.voiceDetails, { color: theme.colors.textTertiary }]}>
+                                {voice.gender.toLowerCase()} • {voiceTone} • {voice.languageCode.toUpperCase()}
+                              </Text>
+                            </View>
+                          </View>
+                          <TouchableOpacity
+                            style={[
+                              styles.playButton,
+                              { backgroundColor: isPlaying ? theme.colors.error + '20' : theme.colors.primary + '20' }
+                            ]}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              previewVoice(voice.name, voice.gender);
+                            }}
+                          >
+                            <Ionicons
+                              name={isPlaying ? 'stop' : 'play'}
+                              size={16}
+                              color={isPlaying ? theme.colors.error : theme.colors.primary}
+                            />
+                          </TouchableOpacity>
+                        </TouchableOpacity>
+                      );
+                    })}
+                </View>
+              )}
+            </View>
+          </Animated.View>
+
+          {/* Translation Provider Section */}
+          <Animated.View entering={FadeInDown.delay(200).springify()}>
             <View style={[
               styles.section,
               { backgroundColor: theme.colors.card }
@@ -499,7 +815,7 @@ export default function SettingsScreen() {
           </Animated.View>
 
           {/* Data Section */}
-          <Animated.View entering={FadeInDown.delay(200).springify()}>
+          <Animated.View entering={FadeInDown.delay(225).springify()}>
             <View style={[
               styles.section,
               { backgroundColor: theme.colors.card }
@@ -521,7 +837,7 @@ export default function SettingsScreen() {
           </Animated.View>
 
           {/* About Section */}
-          <Animated.View entering={FadeInDown.delay(250).springify()}>
+          <Animated.View entering={FadeInDown.delay(275).springify()}>
             <View style={[
               styles.section,
               { backgroundColor: theme.colors.card }
@@ -540,7 +856,7 @@ export default function SettingsScreen() {
           </Animated.View>
 
           {/* Auth Button */}
-          <Animated.View entering={FadeInDown.delay(300).springify()}>
+          <Animated.View entering={FadeInDown.delay(325).springify()}>
             {user ? (
               <TouchableOpacity
                 style={[
@@ -865,5 +1181,98 @@ const styles = StyleSheet.create({
   fontSizeLabel: {
     fontSize: 11,
     fontWeight: '500',
+  },
+  voiceGenderRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  voiceGenderButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    gap: 8,
+  },
+  voiceGenderLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  voiceToneRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  voiceToneButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    gap: 8,
+  },
+  voiceToneLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  voiceListContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    gap: 8,
+  },
+  voiceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  voiceItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10,
+  },
+  voiceIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voiceInfo: {
+    flex: 1,
+  },
+  voiceName: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  voiceDetails: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  playButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

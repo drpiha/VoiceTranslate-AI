@@ -87,6 +87,10 @@ const envSchema = z.object({
   // Feature Flags
   USE_MOCK_AI_SERVICES: z.string().transform(val => val === 'true').default('true'),
   ENABLE_REQUEST_LOGGING: z.string().transform(val => val === 'true').default('true'),
+
+  // AI Punctuation Feature
+  ENABLE_AI_PUNCTUATION: z.string().transform(val => val === 'true').default('false'),
+  PUNCTUATION_MODEL: z.string().default('openai/gpt-4o-mini'),
 });
 
 /**

@@ -17,7 +17,7 @@ let currentSound: Audio.Sound | null = null;
 export async function speak(
   text: string,
   language: string,
-  options?: { gender?: 'MALE' | 'FEMALE'; rate?: number }
+  options?: { gender?: 'MALE' | 'FEMALE'; rate?: number; voiceName?: string }
 ): Promise<void> {
   if (!text || text.trim().length === 0) return;
 
@@ -34,6 +34,7 @@ export async function speak(
       language,
       gender: options?.gender,
       rate: options?.rate,
+      voiceName: options?.voiceName,
     });
 
     if (response.success && response.data?.audioContent) {
@@ -114,4 +115,27 @@ export function isPlaying(): boolean {
   return currentSound !== null;
 }
 
-export const ttsService = { speak, stop, isPlaying };
+/**
+ * Get available voices for a language.
+ */
+export async function getVoices(language?: string): Promise<any[]> {
+  try {
+    const response = await apiClient.get<{
+      success: boolean;
+      data: { voices: any[]; total: number };
+    }>('/translate/voices', {
+      params: { language },
+    });
+
+    if (response.success && response.data?.voices) {
+      return response.data.voices;
+    }
+
+    return [];
+  } catch (error) {
+    console.error('Failed to get voices:', error);
+    return [];
+  }
+}
+
+export const ttsService = { speak, stop, isPlaying, getVoices };

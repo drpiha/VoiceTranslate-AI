@@ -6,6 +6,9 @@ import { useColorScheme } from 'react-native';
 interface SettingsState extends AppSettings {
   isLoading: boolean;
   recentLanguages: string[];
+  voiceGender: 'male' | 'female';
+  voiceTone: 'formal' | 'casual';
+  voicePreferences: Record<string, string>;
 
   setTheme: (theme: 'light' | 'dark' | 'system') => Promise<void>;
   setColorScheme: (scheme: ColorScheme) => Promise<void>;
@@ -20,6 +23,9 @@ interface SettingsState extends AppSettings {
   setDeeplApiKey: (key: string) => Promise<void>;
   setConverseTts: (enabled: boolean) => Promise<void>;
   setFaceToFaceMode: (enabled: boolean) => Promise<void>;
+  setVoiceGender: (gender: 'male' | 'female') => Promise<void>;
+  setVoiceTone: (tone: 'formal' | 'casual') => Promise<void>;
+  setVoiceForLanguage: (language: string, voiceName: string) => Promise<void>;
   addRecentLanguage: (language: string) => Promise<void>;
   loadSettings: () => Promise<void>;
   getEffectiveTheme: () => 'light' | 'dark';
@@ -45,6 +51,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   ...defaultSettings,
   isLoading: true,
   recentLanguages: [],
+  voiceGender: 'female',
+  voiceTone: 'formal',
+  voicePreferences: {},
 
   setTheme: async (theme) => {
     try {
@@ -178,6 +187,35 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  setVoiceGender: async (gender) => {
+    try {
+      await AsyncStorage.setItem('voiceGender', gender);
+      set({ voiceGender: gender });
+    } catch (error) {
+      console.error('Set voice gender error:', error);
+    }
+  },
+
+  setVoiceTone: async (tone) => {
+    try {
+      await AsyncStorage.setItem('voiceTone', tone);
+      set({ voiceTone: tone });
+    } catch (error) {
+      console.error('Set voice tone error:', error);
+    }
+  },
+
+  setVoiceForLanguage: async (language, voiceName) => {
+    try {
+      const { voicePreferences } = get();
+      const updated = { ...voicePreferences, [language]: voiceName };
+      await AsyncStorage.setItem('voicePreferences', JSON.stringify(updated));
+      set({ voicePreferences: updated });
+    } catch (error) {
+      console.error('Set voice for language error:', error);
+    }
+  },
+
   loadSettings: async () => {
     try {
       const settings = await AsyncStorage.multiGet([
@@ -195,13 +233,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         'converseTts',
         'faceToFaceMode',
         'recentLanguages',
+        'voiceGender',
+        'voiceTone',
+        'voicePreferences',
       ]);
 
       const loadedSettings: Partial<AppSettings> & { recentLanguages?: string[] } = {};
 
       settings.forEach(([key, value]) => {
         if (value) {
-          if (key === 'autoPlayTranslation' || key === 'saveHistory' || key === 'hapticFeedback' || key === 'converseTts' || key === 'faceToFaceMode' || key === 'recentLanguages') {
+          if (key === 'autoPlayTranslation' || key === 'saveHistory' || key === 'hapticFeedback' || key === 'converseTts' || key === 'faceToFaceMode' || key === 'recentLanguages' || key === 'voicePreferences') {
             (loadedSettings as Record<string, unknown>)[key] = JSON.parse(value);
           } else {
             (loadedSettings as Record<string, unknown>)[key] = value;
@@ -209,7 +250,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         }
       });
 
-      set({ ...defaultSettings, recentLanguages: [], ...loadedSettings, isLoading: false });
+      set({ ...defaultSettings, recentLanguages: [], voiceGender: 'female', voiceTone: 'formal', voicePreferences: {}, ...loadedSettings, isLoading: false });
     } catch (error) {
       console.error('Load settings error:', error);
       set({ isLoading: false });

@@ -139,7 +139,8 @@ class ApiClient {
     });
 
     this.client.interceptors.request.use(async (config) => {
-      const token = await tokenStorage.getAccessToken();
+      // Use getValidAccessToken to automatically refresh if expired
+      const token = await tokenStorage.getValidAccessToken();
       if (token) config.headers.Authorization = `Bearer ${token}`;
       return config;
     });
@@ -147,7 +148,25 @@ class ApiClient {
     this.client.interceptors.response.use(
       (response) => response,
       async (error: AxiosError) => {
-        if (error.response?.status === 401) {
+        const originalRequest = error.config as any;
+
+        // If 401 and we haven't retried yet, try refreshing the token
+        if (error.response?.status === 401 && !originalRequest._retry) {
+          originalRequest._retry = true;
+
+          try {
+            // Try to get a fresh token
+            const newToken = await tokenStorage.getValidAccessToken();
+            if (newToken) {
+              // Retry the original request with the new token
+              originalRequest.headers.Authorization = `Bearer ${newToken}`;
+              return this.client(originalRequest);
+            }
+          } catch (refreshError) {
+            console.log('Token refresh failed during retry');
+          }
+
+          // If refresh failed, clear tokens
           await tokenStorage.clearTokens();
         }
         return Promise.reject(error);

@@ -485,9 +485,12 @@ export default function LiveScreen() {
   // Pan responder for drag-to-resize (updates shared values, no re-renders)
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 5,
+      // Don't capture immediately - let other touch handlers work
+      onStartShouldSetPanResponder: () => false,
+      // Only capture if clear vertical movement detected
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 10 && Math.abs(gs.dy) > Math.abs(gs.dx) * 2,
       onPanResponderGrant: () => {
+        'worklet';
         startRatio.value = panelRatio.value;
         isDragging.value = true;
         runOnJS(doHapticLight)();
@@ -499,23 +502,29 @@ export default function LiveScreen() {
           isDragging.value = false;
           runOnJS(doHapticLight)();
           lastTapTime.current = 0;
-          return;
+        } else {
+          lastTapTime.current = now;
         }
-        lastTapTime.current = now;
       },
       onPanResponderMove: (_, gestureState) => {
-        if (containerHeight.value > 0) {
+        'worklet';
+        if (containerHeight.value > 0 && isDragging.value) {
           const newRatio = startRatio.value + gestureState.dy / containerHeight.value;
           panelRatio.value = Math.max(0.05, Math.min(0.95, newRatio));
         }
       },
       onPanResponderRelease: () => {
-        isDragging.value = false;
-        // Snap to nearest preset with spring animation
-        const snapped = snapToNearest(panelRatio.value);
-        panelRatio.value = withSpring(snapped, { damping: 20, stiffness: 200 });
-        runOnJS(doHapticLight)();
+        'worklet';
+        if (isDragging.value) {
+          isDragging.value = false;
+          // Snap to nearest preset with spring animation
+          const snapped = snapToNearest(panelRatio.value);
+          panelRatio.value = withSpring(snapped, { damping: 20, stiffness: 200 });
+          runOnJS(doHapticLight)();
+        }
       },
+      // Prevent termination when other responders want to take over
+      onPanResponderTerminationRequest: () => false,
     })
   ).current;
 
@@ -644,7 +653,6 @@ export default function LiveScreen() {
             finalizedSentences={finalizedSentences}
             currentSegment={currentSegment}
             accentColor={theme.colors.primary}
-            panHandlers={panResponder.panHandlers}
             isUpdating={isCurrentlyUpdating}
             isListening={isListening}
             isSpeaking={isSpeaking}
@@ -675,7 +683,6 @@ export default function LiveScreen() {
             finalizedSentences={finalizedSentences}
             currentSegment={currentSegment}
             accentColor={theme.colors.accent}
-            panHandlers={panResponder.panHandlers}
             isUpdating={isRetranslating}
             isProcessing={isRetranslating}
             emptyText={isRetranslating ? 'Translating...' : 'Translation will appear here'}
@@ -847,15 +854,16 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   dragHandleArea: {
-    height: 24,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 8,
   },
   dragHandlePill: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    opacity: 0.35,
+    width: 48,
+    height: 5,
+    borderRadius: 2.5,
+    opacity: 0.4,
   },
   micButtonOverlay: {
     position: 'absolute',
