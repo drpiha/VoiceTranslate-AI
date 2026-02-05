@@ -79,7 +79,8 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
   showSpeakButton = false,
 }) => {
   const fadeAnim = useRef(new Animated.Value(animateIn ? 0 : 1)).current;
-  const slideAnim = useRef(new Animated.Value(animateIn ? (isOwnSpeech ? 30 : -30) : 0)).current;
+  const slideAnim = useRef(new Animated.Value(animateIn ? (speaker === 'A' ? 40 : -40) : 0)).current;
+  const scaleAnim = useRef(new Animated.Value(animateIn ? 0.95 : 1)).current;
 
   const isTranslatedRtl = RTL_LANGUAGES.includes(translatedLang);
   const isOriginalRtl = RTL_LANGUAGES.includes(originalLang);
@@ -89,22 +90,34 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
       Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 250,
+          duration: 300,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.spring(slideAnim, {
           toValue: 0,
+          tension: 60,
+          friction: 9,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
           tension: 80,
-          friction: 10,
+          friction: 8,
           useNativeDriver: true,
         }),
       ]).start();
     }
   }, [animateIn]);
 
-  const bubbleAlignment = isOwnSpeech ? 'flex-end' : 'flex-start';
-  const accentColor = speaker === 'A' ? theme.colors.primary : theme.colors.accent;
+  // Speaker A: RIGHT aligned, teal background, white text
+  // Speaker B: LEFT aligned, gray background, normal text
+  const bubbleAlignment = speaker === 'A' ? 'flex-end' : 'flex-start';
+  const backgroundColor = speaker === 'A'
+    ? '#0D9488' // Teal/emerald for Speaker A
+    : (theme.colors.text === '#F1F5F9' ? '#2A3441' : '#F1F5F9'); // Dark or light gray for Speaker B
+  const textColor = speaker === 'A' ? '#FFFFFF' : theme.colors.text;
+  const originalTextColor = speaker === 'A' ? 'rgba(255, 255, 255, 0.5)' : theme.colors.textTertiary;
 
   return (
     <Animated.View
@@ -113,46 +126,53 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
         {
           alignSelf: bubbleAlignment,
           opacity: fadeAnim,
-          transform: [{ translateX: slideAnim }],
+          transform: [
+            { translateX: slideAnim },
+            { scale: scaleAnim },
+          ],
         },
       ]}
     >
-      {/* Clean bubble - no colored background, just subtle border */}
       <View style={[
         styles.bubble,
         {
-          backgroundColor: isOwnSpeech
-            ? (theme.colors.surface)
-            : (theme.colors.card),
-          borderLeftColor: isOwnSpeech ? 'transparent' : accentColor,
-          borderLeftWidth: isOwnSpeech ? 0 : 2,
-          borderRightColor: isOwnSpeech ? accentColor : 'transparent',
-          borderRightWidth: isOwnSpeech ? 2 : 0,
+          backgroundColor,
+          borderRadius: 18,
+          paddingHorizontal: 16,
+          paddingVertical: 14,
         },
       ]}>
-        {/* Main text */}
+        {/* Main translation text - LARGE and BOLD */}
         <Text
           style={[
             styles.mainText,
             {
-              color: theme.colors.text,
+              color: textColor,
               textAlign: isTranslatedRtl ? 'right' : 'left',
+              fontSize: 20,
+              fontWeight: '700',
+              lineHeight: 28,
+              letterSpacing: -0.2,
             },
           ]}
           selectable
         >
           {translatedText}
         </Text>
-        {isCurrent && <TypingDots color={accentColor} />}
+        {isCurrent && <TypingDots color={speaker === 'A' ? '#FFFFFF' : theme.colors.primary} />}
 
-        {/* Original text */}
+        {/* Original text - smaller, 50% opacity */}
         {originalText && originalText !== translatedText && (
           <Text
             style={[
               styles.originalText,
               {
-                color: theme.colors.textTertiary,
+                color: originalTextColor,
                 textAlign: isOriginalRtl ? 'right' : 'left',
+                fontSize: 13,
+                lineHeight: 18,
+                marginTop: 6,
+                opacity: 0.5,
               },
             ]}
           >
@@ -164,10 +184,27 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
         {showSpeakButton && translatedText && !isCurrent && onSpeak && (
           <TouchableOpacity
             onPress={() => onSpeak(translatedText, translatedLang)}
-            style={[styles.speakBtn, { alignSelf: isOwnSpeech ? 'flex-start' : 'flex-end' }]}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={[
+              styles.speakBtn,
+              {
+                alignSelf: speaker === 'A' ? 'flex-start' : 'flex-end',
+                marginTop: 8,
+              },
+            ]}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Ionicons name="chatbubble-ellipses-outline" size={16} color={accentColor} />
+            <View style={[
+              styles.speakBtnInner,
+              {
+                backgroundColor: speaker === 'A' ? 'rgba(255, 255, 255, 0.15)' : theme.colors.primary + '10',
+              },
+            ]}>
+              <Ionicons
+                name="volume-medium"
+                size={16}
+                color={speaker === 'A' ? '#FFFFFF' : theme.colors.primary}
+              />
+            </View>
           </TouchableOpacity>
         )}
       </View>
@@ -177,38 +214,42 @@ export const ConversationBubble: React.FC<ConversationBubbleProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    maxWidth: '90%',
-    marginVertical: 3,
+    maxWidth: '85%',
+    marginVertical: 5,
   },
   bubble: {
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   mainText: {
-    fontSize: 17,
-    lineHeight: 24,
-    fontWeight: '400',
+    // Styles applied inline for premium typography
   },
   originalText: {
-    fontSize: 14,
-    lineHeight: 19,
-    marginTop: 5,
-    fontStyle: 'italic',
+    // Styles applied inline for consistency
   },
   speakBtn: {
-    marginTop: 6,
-    padding: 4,
+    padding: 2,
+  },
+  speakBtnInner: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   dotsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginTop: 4,
+    gap: 5,
+    marginTop: 6,
   },
   dot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
 });

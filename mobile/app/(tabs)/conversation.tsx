@@ -22,9 +22,13 @@ import { useConversationStore, ConversationTurn } from '../../src/store/conversa
 import { useHistoryStore } from '../../src/store/historyStore';
 import { LanguageSelector } from '../../src/components/LanguageSelector';
 import { ConversationBubble } from '../../src/components/ConversationBubble';
+import { CompactLanguagePill } from '../../src/components/CompactLanguagePill';
+import { ConversationEmptyState } from '../../src/components/ConversationEmptyState';
+import { BlurView } from 'expo-blur';
+import { Modal, FlatList, TextInput } from 'react-native';
 import { translationService, RealtimeTranslationResult } from '../../src/services/translationService';
 import { audioService, AudioSegment } from '../../src/services/audioService';
-import { getLanguageByCode } from '../../src/constants/languages';
+import { getLanguageByCode, LANGUAGES, Language } from '../../src/constants/languages';
 import { useDebouncedSpeaking } from '../../src/hooks/useDebouncedSpeaking';
 import { useNavigationStore } from '../../src/store/navigationStore';
 
@@ -55,6 +59,8 @@ export default function ConversationScreen() {
 
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [langModalVisible, setLangModalVisible] = useState(false);
+  const [langModalFor, setLangModalFor] = useState<'A' | 'B' | null>(null);
 
   const scrollRefA = useRef<ScrollView>(null);
   const scrollRefB = useRef<ScrollView>(null);
@@ -563,15 +569,26 @@ export default function ConversationScreen() {
   // Debounce the speaking state to prevent rapid label flickering
   const displaySpeaking = useDebouncedSpeaking(isSpeaking, isListening, 500);
 
-  // Mini waveform bars for active speak button
+  // Premium waveform bars for active speak button
   const WaveformBar = ({ delay, color }: { delay: number; color: string }) => {
-    const anim = useRef(new Animated.Value(0.3)).current;
+    const anim = useRef(new Animated.Value(0.4)).current;
 
     useEffect(() => {
       const wave = Animated.loop(
         Animated.sequence([
-          Animated.timing(anim, { toValue: 1, duration: 250 + Math.random() * 150, delay, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
-          Animated.timing(anim, { toValue: 0.3, duration: 250 + Math.random() * 150, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 300 + Math.random() * 200,
+            delay,
+            useNativeDriver: true,
+            easing: Easing.bezier(0.4, 0, 0.2, 1),
+          }),
+          Animated.timing(anim, {
+            toValue: 0.4,
+            duration: 300 + Math.random() * 200,
+            useNativeDriver: true,
+            easing: Easing.bezier(0.4, 0, 0.2, 1),
+          }),
         ])
       );
       wave.start();
@@ -579,7 +596,19 @@ export default function ConversationScreen() {
     }, []);
 
     return (
-      <Animated.View style={{ width: 3, height: 16, borderRadius: 1.5, backgroundColor: color, transform: [{ scaleY: anim }] }} />
+      <Animated.View
+        style={{
+          width: 4,
+          height: 20,
+          borderRadius: 2,
+          backgroundColor: color,
+          transform: [{ scaleY: anim }],
+          shadowColor: color,
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.5,
+          shadowRadius: 4,
+        }}
+      />
     );
   };
 
@@ -589,48 +618,86 @@ export default function ConversationScreen() {
     const pulseAnim = person === 'A' ? speakAPulse : speakBPulse;
     const personInfo = person === 'A' ? personAInfo : personBInfo;
 
+    const buttonScale = useRef(new Animated.Value(1)).current;
+
+    const handlePressIn = () => {
+      Animated.spring(buttonScale, {
+        toValue: 0.95,
+        useNativeDriver: true,
+        tension: 150,
+        friction: 5,
+      }).start();
+    };
+
+    const handlePressOut = () => {
+      Animated.spring(buttonScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 150,
+        friction: 5,
+      }).start();
+    };
+
     return (
       <TouchableOpacity
         onPress={() => isActive ? stopSpeaking() : startSpeaking(person)}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
         disabled={isOtherActive}
-        activeOpacity={0.8}
+        activeOpacity={1}
       >
         <Animated.View style={[
           isOtherActive && styles.speakButtonDisabled,
-          { transform: [{ scale: pulseAnim }] },
+          { transform: [{ scale: Animated.multiply(pulseAnim, buttonScale) }] },
         ]}>
           <View style={[
             styles.speakButton,
             {
               backgroundColor: isActive
                 ? theme.colors.error
-                : theme.colors.primary + '15',
-              borderWidth: 1,
+                : theme.colors.primary + '12',
+              borderWidth: 2,
               borderColor: isActive
                 ? theme.colors.error
-                : theme.colors.primary + '25',
+                : theme.colors.primary + '30',
+              shadowColor: isActive ? theme.colors.error : theme.colors.primary,
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: isActive ? 0.3 : 0.15,
+              shadowRadius: 12,
+              elevation: isActive ? 8 : 4,
             },
           ]}>
-            {isActive && displaySpeaking ? (
-              <View style={styles.waveformContainer}>
-                {[0, 60, 120, 180].map((delay, i) => (
-                  <WaveformBar key={i} delay={delay} color={'#FFF'} />
-                ))}
+            <View style={styles.speakButtonContent}>
+              {isActive && displaySpeaking ? (
+                <View style={styles.waveformContainer}>
+                  {[0, 60, 120, 180, 240].map((delay, i) => (
+                    <WaveformBar key={i} delay={delay} color={'#FFF'} />
+                  ))}
+                </View>
+              ) : (
+                <View style={styles.micIconContainer}>
+                  <Ionicons
+                    name={isActive ? 'stop-circle' : 'mic'}
+                    size={24}
+                    color={isActive ? '#FFF' : theme.colors.primary}
+                  />
+                </View>
+              )}
+              <View style={styles.speakTextContainer}>
+                <Text style={[styles.speakButtonLabel, {
+                  color: isActive ? 'rgba(255, 255, 255, 0.7)' : theme.colors.textTertiary,
+                }]}>
+                  {personInfo?.flag} Speaker {person}
+                </Text>
+                <Text style={[styles.speakButtonText, {
+                  color: isActive ? '#FFF' : theme.colors.text,
+                }]}>
+                  {isActive
+                    ? (displaySpeaking ? 'Listening...' : 'Tap to stop')
+                    : 'Tap to speak'}
+                </Text>
               </View>
-            ) : (
-              <Ionicons
-                name={isActive ? 'stop' : 'mic'}
-                size={20}
-                color={isActive ? '#FFF' : theme.colors.primary}
-              />
-            )}
-            <Text style={[styles.speakButtonText, {
-              color: isActive ? '#FFF' : theme.colors.text,
-            }]}>
-              {isActive
-                ? (displaySpeaking ? 'Listening...' : 'Stop')
-                : 'Speak'}
-            </Text>
+            </View>
           </View>
         </Animated.View>
       </TouchableOpacity>
@@ -711,12 +778,7 @@ export default function ConversationScreen() {
                 showsVerticalScrollIndicator={false}
               >
                 {turns.length === 0 && !currentTurn ? (
-                  <View style={styles.emptyState}>
-                    <Ionicons name="chatbubbles-outline" size={24} color={theme.colors.textTertiary} />
-                    <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                      Tap the button to start speaking
-                    </Text>
-                  </View>
+                  <ConversationEmptyState theme={theme} mode="face-to-face" />
                 ) : (
                   renderBubblesForPerson('A')
                 )}
@@ -733,45 +795,73 @@ export default function ConversationScreen() {
             <View style={[styles.converseDragPill, { backgroundColor: theme.colors.textTertiary }]} />
           </View>
 
-          {/* Language Bar - clean, centered swap */}
-          <View style={[styles.languageBar, {
-            backgroundColor: theme.colors.card,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-          }]}>
-            <View style={styles.langBarSide}>
-              <LanguageSelector value={personALang} onChange={setPersonALang} excludeAuto />
-            </View>
+          {/* Enhanced Language Bar with glassmorphism */}
+          <BlurView
+            intensity={60}
+            tint={isDark ? 'dark' : 'light'}
+            style={[styles.languageBarBlur, {
+              backgroundColor: isDark
+                ? 'rgba(26, 35, 50, 0.85)'
+                : 'rgba(255, 255, 255, 0.85)',
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }]}
+          >
+            <View style={styles.langBarContent}>
+              <View style={styles.langBarSide}>
+                <CompactLanguagePill
+                  languageCode={personALang}
+                  theme={theme}
+                  onPress={() => {
+                    handleHaptic();
+                    setLangModalFor('A');
+                    setLangModalVisible(true);
+                  }}
+                  isRecording={isListening && activeSpeaker === 'A'}
+                />
+              </View>
 
-            <TouchableOpacity
-              onPress={() => {
-                handleHaptic();
-                swapRotationCount.current += 1;
-                Animated.spring(swapRotation, {
-                  toValue: swapRotationCount.current,
-                  useNativeDriver: true,
-                  tension: 50,
-                  friction: 8,
-                }).start();
-                const tempLang = personALang;
-                setPersonALang(personBLang);
-                setPersonBLang(tempLang);
-              }}
-              style={styles.swapButton}
-            >
-              <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
-                <View style={[styles.swapButtonCircle, {
-                  backgroundColor: theme.colors.primary + '10',
-                }]}>
-                  <Ionicons name="swap-horizontal" size={16} color={theme.colors.primary} />
-                </View>
-              </Animated.View>
-            </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  handleHaptic();
+                  swapRotationCount.current += 1;
+                  Animated.spring(swapRotation, {
+                    toValue: swapRotationCount.current,
+                    useNativeDriver: true,
+                    tension: 50,
+                    friction: 8,
+                  }).start();
+                  const tempLang = personALang;
+                  setPersonALang(personBLang);
+                  setPersonBLang(tempLang);
+                }}
+                style={styles.swapButton}
+              >
+                <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
+                  <View style={[styles.swapButtonCircle, {
+                    backgroundColor: theme.colors.primary + '15',
+                    borderWidth: 1.5,
+                    borderColor: theme.colors.primary + '30',
+                  }]}>
+                    <Ionicons name="swap-horizontal" size={20} color={theme.colors.primary} />
+                  </View>
+                </Animated.View>
+              </TouchableOpacity>
 
-            <View style={styles.langBarSide}>
-              <LanguageSelector value={personBLang} onChange={setPersonBLang} excludeAuto />
+              <View style={styles.langBarSide}>
+                <CompactLanguagePill
+                  languageCode={personBLang}
+                  theme={theme}
+                  onPress={() => {
+                    handleHaptic();
+                    setLangModalFor('B');
+                    setLangModalVisible(true);
+                  }}
+                  isRecording={isListening && activeSpeaker === 'B'}
+                />
+              </View>
             </View>
-          </View>
+          </BlurView>
 
           {/* Person B Section (Bottom) */}
           <ReAnimated.View style={[styles.personSection, bottomSectionStyle]}>
@@ -783,12 +873,7 @@ export default function ConversationScreen() {
               showsVerticalScrollIndicator={false}
             >
               {turns.length === 0 && !currentTurn ? (
-                <View style={styles.emptyState}>
-                  <Ionicons name="chatbubbles-outline" size={24} color={theme.colors.textTertiary} />
-                  <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                    Tap the button to start speaking
-                  </Text>
-                </View>
+                <ConversationEmptyState theme={theme} mode="face-to-face" />
               ) : (
                 renderBubblesForPerson('B')
               )}
@@ -797,45 +882,73 @@ export default function ConversationScreen() {
         </View>
       ) : (
         <>
-          {/* Unified Chat Mode - Language Bar at top */}
-          <View style={[styles.languageBar, {
-            backgroundColor: theme.colors.card,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-          }]}>
-            <View style={styles.langBarSide}>
-              <LanguageSelector value={personALang} onChange={setPersonALang} excludeAuto />
-            </View>
+          {/* Unified Chat Mode - Enhanced Language Bar */}
+          <BlurView
+            intensity={60}
+            tint={isDark ? 'dark' : 'light'}
+            style={[styles.languageBarBlur, {
+              backgroundColor: isDark
+                ? 'rgba(26, 35, 50, 0.85)'
+                : 'rgba(255, 255, 255, 0.85)',
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }]}
+          >
+            <View style={styles.langBarContent}>
+              <View style={styles.langBarSide}>
+                <CompactLanguagePill
+                  languageCode={personALang}
+                  theme={theme}
+                  onPress={() => {
+                    handleHaptic();
+                    setLangModalFor('A');
+                    setLangModalVisible(true);
+                  }}
+                  isRecording={isListening && activeSpeaker === 'A'}
+                />
+              </View>
 
-            <TouchableOpacity
-              onPress={() => {
-                handleHaptic();
-                swapRotationCount.current += 1;
-                Animated.spring(swapRotation, {
-                  toValue: swapRotationCount.current,
-                  useNativeDriver: true,
-                  tension: 50,
-                  friction: 8,
-                }).start();
-                const tempLang = personALang;
-                setPersonALang(personBLang);
-                setPersonBLang(tempLang);
-              }}
-              style={styles.swapButton}
-            >
-              <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
-                <View style={[styles.swapButtonCircle, {
-                  backgroundColor: theme.colors.primary + '10',
-                }]}>
-                  <Ionicons name="swap-horizontal" size={16} color={theme.colors.primary} />
-                </View>
-              </Animated.View>
-            </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  handleHaptic();
+                  swapRotationCount.current += 1;
+                  Animated.spring(swapRotation, {
+                    toValue: swapRotationCount.current,
+                    useNativeDriver: true,
+                    tension: 50,
+                    friction: 8,
+                  }).start();
+                  const tempLang = personALang;
+                  setPersonALang(personBLang);
+                  setPersonBLang(tempLang);
+                }}
+                style={styles.swapButton}
+              >
+                <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
+                  <View style={[styles.swapButtonCircle, {
+                    backgroundColor: theme.colors.primary + '15',
+                    borderWidth: 1.5,
+                    borderColor: theme.colors.primary + '30',
+                  }]}>
+                    <Ionicons name="swap-horizontal" size={20} color={theme.colors.primary} />
+                  </View>
+                </Animated.View>
+              </TouchableOpacity>
 
-            <View style={styles.langBarSide}>
-              <LanguageSelector value={personBLang} onChange={setPersonBLang} excludeAuto />
+              <View style={styles.langBarSide}>
+                <CompactLanguagePill
+                  languageCode={personBLang}
+                  theme={theme}
+                  onPress={() => {
+                    handleHaptic();
+                    setLangModalFor('B');
+                    setLangModalVisible(true);
+                  }}
+                  isRecording={isListening && activeSpeaker === 'B'}
+                />
+              </View>
             </View>
-          </View>
+          </BlurView>
 
           {/* Single unified chat view */}
           <View style={styles.unifiedChatContainer}>
@@ -846,12 +959,7 @@ export default function ConversationScreen() {
               showsVerticalScrollIndicator={false}
             >
               {turns.length === 0 && !currentTurn ? (
-                <View style={styles.emptyState}>
-                  <Ionicons name="chatbubbles-outline" size={32} color={theme.colors.textTertiary} />
-                  <Text style={[styles.emptyText, { color: theme.colors.textTertiary }]}>
-                    Tap a speak button to start a conversation
-                  </Text>
-                </View>
+                <ConversationEmptyState theme={theme} mode="chat" />
               ) : (
                 renderBubblesForPerson('B')
               )}
@@ -877,6 +985,82 @@ export default function ConversationScreen() {
           <Text style={[styles.errorText, { color: theme.colors.error }]}>{connectionError}</Text>
         </View>
       )}
+
+      {/* Compact Language Selector Modal */}
+      <Modal
+        visible={langModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          setLangModalVisible(false);
+          setLangModalFor(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => {
+              setLangModalVisible(false);
+              setLangModalFor(null);
+            }}
+          />
+          <View style={[styles.modalContent, { backgroundColor: theme.colors.background }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: theme.colors.border }]}>
+              <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
+                Select Language for Speaker {langModalFor}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setLangModalVisible(false);
+                  setLangModalFor(null);
+                }}
+              >
+                <Text style={[styles.modalClose, { color: theme.colors.primary }]}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={LANGUAGES.filter(l => l.code !== 'auto')}
+              keyExtractor={(item) => item.code}
+              renderItem={({ item }) => {
+                const isSelected = (langModalFor === 'A' ? personALang : personBLang) === item.code;
+                return (
+                  <TouchableOpacity
+                    onPress={() => {
+                      handleHaptic();
+                      if (langModalFor === 'A') {
+                        setPersonALang(item.code);
+                      } else if (langModalFor === 'B') {
+                        setPersonBLang(item.code);
+                      }
+                      setLangModalVisible(false);
+                      setLangModalFor(null);
+                    }}
+                    style={[
+                      styles.langOption,
+                      { borderBottomColor: theme.colors.borderLight },
+                      isSelected && { backgroundColor: theme.colors.primary + '10' },
+                    ]}
+                  >
+                    <Text style={styles.langFlag}>{item.flag}</Text>
+                    <View style={styles.langTextContainer}>
+                      <Text style={[styles.langName, { color: theme.colors.text }]}>
+                        {item.name}
+                      </Text>
+                      <Text style={[styles.langNative, { color: theme.colors.textSecondary }]}>
+                        {item.nativeName}
+                      </Text>
+                    </View>
+                    {isSelected && (
+                      <Ionicons name="checkmark-circle" size={24} color={theme.colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -935,15 +1119,16 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '180deg' }],
   },
   converseDragHandle: {
-    height: 24,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 8,
   },
   converseDragPill: {
-    width: 40,
-    height: 5,
-    borderRadius: 2.5,
-    opacity: 0.4,
+    width: 50,
+    height: 6,
+    borderRadius: 3,
+    opacity: 0.5,
   },
   personBadge: {
     flexDirection: 'row',
@@ -966,6 +1151,24 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginVertical: 3,
   },
+  languageBarBlur: {
+    marginHorizontal: 12,
+    borderRadius: 16,
+    marginVertical: 6,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  langBarContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
   langBarSide: {
     flex: 1,
     flexDirection: 'row',
@@ -976,14 +1179,19 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   swapButton: {
-    marginHorizontal: 8,
+    marginHorizontal: 10,
   },
   swapButtonCircle: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
   },
   bubblesContainer: {
     flex: 1,
@@ -993,43 +1201,51 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingBottom: 24,
   },
-  emptyState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
-    gap: 8,
-  },
-  emptyText: {
-    fontSize: 13,
-    textAlign: 'center',
-    opacity: 0.7,
-  },
   speakButton: {
+    borderRadius: 16,
+    marginVertical: 6,
+    marginHorizontal: 4,
+    overflow: 'hidden',
+  },
+  speakButtonContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 22,
-    borderRadius: 14,
-    gap: 8,
-    marginVertical: 4,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    gap: 14,
   },
   speakButtonDisabled: {
     opacity: 0.35,
   },
-  speakButtonFlag: {
-    fontSize: 22,
+  micIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  speakTextContainer: {
+    flex: 1,
+    gap: 2,
+  },
+  speakButtonLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
   },
   speakButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: -0.2,
   },
   waveformContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    height: 20,
+    gap: 4,
+    height: 24,
+    width: 48,
+    justifyContent: 'center',
   },
   activeDot: {
     width: 6,
@@ -1068,5 +1284,57 @@ const styles = StyleSheet.create({
   },
   unifiedSpeakBtn: {
     flex: 1,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    maxHeight: '75%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  modalClose: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  langOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    gap: 14,
+  },
+  langFlag: {
+    fontSize: 28,
+  },
+  langTextContainer: {
+    flex: 1,
+  },
+  langName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  langNative: {
+    fontSize: 14,
   },
 });

@@ -139,6 +139,10 @@ const baseLightColors = {
   disabled: '#CBD5E1',
   shadow: 'rgba(0, 0, 0, 0.08)',
   overlay: 'rgba(15, 23, 42, 0.6)',
+  bubbleSpeakerA: '#0D9488',
+  bubbleSpeakerAText: '#FFFFFF',
+  bubbleSpeakerB: '#F1F5F9',
+  bubbleSpeakerBText: '#0F172A',
 };
 
 const baseDarkColors = {
@@ -161,6 +165,10 @@ const baseDarkColors = {
   disabled: '#475569',
   shadow: 'rgba(0, 0, 0, 0.3)',
   overlay: 'rgba(0, 0, 0, 0.8)',
+  bubbleSpeakerA: '#0D9488',
+  bubbleSpeakerAText: '#FFFFFF',
+  bubbleSpeakerB: '#2A3441',
+  bubbleSpeakerBText: '#F1F5F9',
 };
 
 // Legacy exports for backward compatibility (now defaults to emerald)
