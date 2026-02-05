@@ -7,48 +7,49 @@ import {
   Animated,
   Easing,
 } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { Theme } from '../constants/theme';
 import { useDebouncedSpeaking } from '../hooks/useDebouncedSpeaking';
 
-// Subtle Glow Orb
-const GlowOrb = ({ isActive, size, color, opacity }: { isActive: boolean; size: number; color: string; opacity: number }) => {
-  const glowAnim = useRef(new Animated.Value(opacity * 0.6)).current;
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+// Ripple ring animation
+const RippleRing = ({ isActive, size, color, delay }: { isActive: boolean; size: number; color: string; delay: number }) => {
+  const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (isActive) {
-      const glowAnimation = Animated.loop(
+      const animation = Animated.loop(
         Animated.sequence([
-          Animated.timing(glowAnim, { toValue: opacity, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-          Animated.timing(glowAnim, { toValue: opacity * 0.5, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.delay(delay),
+          Animated.parallel([
+            Animated.timing(scaleAnim, { toValue: 1.8, duration: 1500, useNativeDriver: true, easing: Easing.out(Easing.ease) }),
+            Animated.sequence([
+              Animated.timing(opacityAnim, { toValue: 0.4, duration: 200, useNativeDriver: true }),
+              Animated.timing(opacityAnim, { toValue: 0, duration: 1300, useNativeDriver: true }),
+            ]),
+          ]),
+          Animated.timing(scaleAnim, { toValue: 0.8, duration: 0, useNativeDriver: true }),
         ])
       );
-      const scaleAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(scaleAnim, { toValue: 1.05, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-          Animated.timing(scaleAnim, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        ])
-      );
-      glowAnimation.start();
-      scaleAnimation.start();
-      return () => { glowAnimation.stop(); scaleAnimation.stop(); };
+      animation.start();
+      return () => animation.stop();
     } else {
-      glowAnim.setValue(0);
-      scaleAnim.setValue(1);
+      scaleAnim.setValue(0.8);
+      opacityAnim.setValue(0);
     }
   }, [isActive]);
 
   return (
     <Animated.View
       style={[
-        styles.glowOrb,
+        styles.rippleRing,
         {
           width: size,
           height: size,
           borderRadius: size / 2,
-          backgroundColor: color,
-          opacity: glowAnim,
+          borderColor: color,
+          opacity: opacityAnim,
           transform: [{ scale: scaleAnim }],
         },
       ]}
@@ -80,18 +81,17 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
 }) => {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const buttonScaleAnim = useRef(new Animated.Value(1)).current;
-  const dotColorAnim = useRef(new Animated.Value(0)).current;
-  const floatingAnim = useRef(new Animated.Value(0)).current;
+  const glowAnim = useRef(new Animated.Value(0)).current;
 
   const displaySpeaking = useDebouncedSpeaking(isSpeaking, isListening, 500);
 
-  // Calmer pulse when listening
+  // Subtle breathing when listening
   useEffect(() => {
     if (isListening) {
       const pulse = Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.06, duration: 800, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(pulseAnim, { toValue: 1.04, duration: 1000, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
         ])
       );
       pulse.start();
@@ -101,30 +101,15 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
     }
   }, [isListening]);
 
-  // Gentle floating when idle
+  // Glow intensity based on speaking
   useEffect(() => {
-    if (!isListening) {
-      const floating = Animated.loop(
-        Animated.sequence([
-          Animated.timing(floatingAnim, { toValue: 1, duration: 2500, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
-          Animated.timing(floatingAnim, { toValue: 0, duration: 2500, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
-        ])
-      );
-      floating.start();
-      return () => floating.stop();
-    } else {
-      floatingAnim.setValue(0);
-    }
-  }, [isListening]);
-
-  useEffect(() => {
-    Animated.timing(dotColorAnim, {
-      toValue: displaySpeaking ? 1 : 0,
+    Animated.timing(glowAnim, {
+      toValue: displaySpeaking ? 1 : (isListening ? 0.3 : 0),
       duration: 300,
-      useNativeDriver: false,
+      useNativeDriver: true,
       easing: Easing.inOut(Easing.ease),
     }).start();
-  }, [displaySpeaking]);
+  }, [displaySpeaking, isListening]);
 
   const animatePress = () => {
     Animated.sequence([
@@ -138,34 +123,51 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
     onPress();
   };
 
-  const dotColor = dotColorAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [theme.colors.primary, theme.colors.accent],
-  });
-
-  const floatingY = floatingAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-3, 3],
-  });
+  const buttonColor = isListening ? theme.colors.error : theme.colors.primary;
+  const glowColor = isListening
+    ? (displaySpeaking ? theme.colors.accent : theme.colors.error)
+    : theme.colors.primary;
 
   return (
     <View style={styles.container}>
+      {/* Ripple rings when listening */}
       {isListening && (
-        <View>
-          <GlowOrb isActive={true} size={size * 1.6} color={theme.colors.glow} opacity={0.15} />
-          <GlowOrb isActive={true} size={size * 2.4} color={theme.colors.glowAccent} opacity={0.08} />
-        </View>
+        <>
+          <RippleRing isActive={displaySpeaking} size={size * 1.5} color={glowColor} delay={0} />
+          <RippleRing isActive={displaySpeaking} size={size * 1.5} color={glowColor} delay={500} />
+          <RippleRing isActive={displaySpeaking} size={size * 1.5} color={glowColor} delay={1000} />
+        </>
       )}
+
+      {/* Glow backdrop */}
+      <Animated.View
+        style={[
+          styles.glowBackdrop,
+          {
+            width: size * 1.6,
+            height: size * 1.6,
+            borderRadius: size * 0.8,
+            backgroundColor: glowColor,
+            opacity: Animated.multiply(glowAnim, 0.25),
+          },
+        ]}
+      />
 
       <TouchableOpacity onPress={handlePress} activeOpacity={0.9} style={styles.touchable}>
         <Animated.View
           style={{
             transform: [
               { scale: Animated.multiply(pulseAnim, buttonScaleAnim) },
-              { translateY: isListening ? 0 : floatingY },
             ],
           }}
         >
+          {/* Glassmorphic outer ring */}
+          <View style={[styles.glassRing, { width: size + 12, height: size + 12, borderRadius: (size + 12) / 2 }]}>
+            <BlurView intensity={20} tint="light" style={StyleSheet.absoluteFill} />
+            <View style={[styles.glassRingBorder, { borderColor: buttonColor + '30' }]} />
+          </View>
+
+          {/* Main button */}
           <View
             style={[
               styles.button,
@@ -173,8 +175,8 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
                 width: size,
                 height: size,
                 borderRadius: size / 2,
-                backgroundColor: isListening ? theme.colors.error : theme.colors.primary,
-                shadowColor: isListening ? theme.colors.error : theme.colors.primary,
+                backgroundColor: buttonColor,
+                shadowColor: buttonColor,
               },
             ]}
           >
@@ -187,17 +189,13 @@ export const FloatingMicButton: React.FC<FloatingMicButtonProps> = ({
         </Animated.View>
       </TouchableOpacity>
 
+      {/* Status text */}
       <View style={styles.statusContainer}>
         {isListening ? (
           <View style={styles.statusRow}>
-            <Animated.View
-              style={[
-                styles.recordingDot,
-                { backgroundColor: dotColor, shadowColor: dotColor },
-              ]}
-            />
+            <View style={[styles.recordingDot, { backgroundColor: displaySpeaking ? theme.colors.accent : theme.colors.error }]} />
             <Text style={[styles.statusText, { color: theme.colors.text }]}>
-              Tap to stop
+              {displaySpeaking ? 'Listening...' : 'Tap to stop'}
             </Text>
           </View>
         ) : (
@@ -219,22 +217,37 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     paddingTop: 12,
   },
-  glowOrb: {
+  rippleRing: {
+    position: 'absolute',
+    borderWidth: 2,
+  },
+  glowBackdrop: {
     position: 'absolute',
   },
   touchable: {
     zIndex: 10,
   },
+  glassRing: {
+    position: 'absolute',
+    top: -6,
+    left: -6,
+    overflow: 'hidden',
+  },
+  glassRingBorder: {
+    ...StyleSheet.absoluteFillObject,
+    borderWidth: 1.5,
+    borderRadius: 999,
+  },
   button: {
     alignItems: 'center',
     justifyContent: 'center',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.35,
     shadowRadius: 12,
-    elevation: 8,
+    elevation: 10,
   },
   statusContainer: {
-    marginTop: 12,
+    marginTop: 14,
   },
   statusRow: {
     flexDirection: 'row',
@@ -242,15 +255,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   recordingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    shadowRadius: 4,
-    shadowOpacity: 0.4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   statusText: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '600',
     textAlign: 'center',
+    letterSpacing: 0.2,
   },
 });
