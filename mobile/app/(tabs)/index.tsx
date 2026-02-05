@@ -50,6 +50,9 @@ export default function LiveScreen() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [detectedLang, setDetectedLang] = useState<string | null>(null);
+  const [stableDetectedLang, setStableDetectedLang] = useState<string | null>(null);
+  const langDetectionCount = useRef<Record<string, number>>({});
+  const LANG_STABILITY_THRESHOLD = 3; // Need 3 consecutive detections to change language
   const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('online');
   const [isRetranslating, setIsRetranslating] = useState(false);
 
@@ -109,7 +112,29 @@ export default function LiveScreen() {
       }
 
       if (data.detectedLanguage) {
-        setDetectedLang(data.detectedLanguage);
+        // Stabilize language detection - don't change on every segment
+        const newLang = data.detectedLanguage;
+        if (newLang !== stableDetectedLang) {
+          // Count how many times we've seen this language
+          langDetectionCount.current[newLang] = (langDetectionCount.current[newLang] || 0) + 1;
+
+          // Only change if we've seen this language consistently
+          if (langDetectionCount.current[newLang] >= LANG_STABILITY_THRESHOLD) {
+            setStableDetectedLang(newLang);
+            setDetectedLang(newLang);
+            // Reset counters
+            langDetectionCount.current = {};
+          }
+        } else {
+          // Same language, keep the count
+          langDetectionCount.current[newLang] = (langDetectionCount.current[newLang] || 0) + 1;
+        }
+
+        // Set initial detected lang on first detection
+        if (!stableDetectedLang && !detectedLang) {
+          setDetectedLang(newLang);
+          setStableDetectedLang(newLang);
+        }
       }
 
       const segmentId = data.segmentId || Date.now();
@@ -275,6 +300,20 @@ export default function LiveScreen() {
     audioService.stopRealtimeMode();
     setIsListening(false);
     setIsSpeaking(false);
+    setIsProcessing(false);
+    // Finalize current segment if exists (so typing dots stop)
+    if (currentSegment && currentSegment.transcript) {
+      setFinalizedSentences(prev => {
+        if (prev.some(s => s.id === currentSegment.id)) return prev;
+        return [...prev, {
+          id: currentSegment.id,
+          transcript: currentSegment.transcript,
+          translation: currentSegment.translation,
+          timestamp: new Date(),
+        }];
+      });
+      setCurrentSegment(null);
+    }
     if (reconnectTimer.current) {
       clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
@@ -325,6 +364,8 @@ export default function LiveScreen() {
     setFinalizedSentences([]);
     setCurrentSegment(null);
     setDetectedLang(null);
+    setStableDetectedLang(null);
+    langDetectionCount.current = {};
     setIsProcessing(false);
     setConnectionError(null);
   };

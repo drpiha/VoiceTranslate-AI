@@ -435,6 +435,87 @@ class AudioService {
     }
   }
 
+  async startRecordingWithMetering(
+    onMeteringUpdate: (level: number, isSpeaking: boolean) => void
+  ): Promise<void> {
+    try {
+      if (this.recording || this.isRecordingInProgress) {
+        await this.cleanup();
+      }
+
+      const hasPermission = await this.requestPermissions();
+      if (!hasPermission) {
+        throw new Error('Microphone permission not granted');
+      }
+
+      this.isRecordingInProgress = true;
+      this.onMeteringUpdate = onMeteringUpdate;
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording } = await Audio.Recording.createAsync(
+        {
+          android: {
+            extension: '.m4a',
+            outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+            audioEncoder: Audio.AndroidAudioEncoder.AAC,
+            sampleRate: 48000,
+            numberOfChannels: 1,
+            bitRate: 128000,
+          },
+          ios: {
+            extension: '.m4a',
+            outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+            audioQuality: Audio.IOSAudioQuality.MAX,
+            sampleRate: 48000,
+            numberOfChannels: 1,
+            bitRate: 128000,
+          },
+          web: {
+            mimeType: 'audio/webm',
+            bitsPerSecond: 128000,
+          },
+          isMeteringEnabled: true,
+        },
+        undefined,
+        100
+      );
+
+      this.recording = recording;
+
+      // Poll metering at 50ms intervals
+      this.meteringInterval = setInterval(async () => {
+        if (!this.recording) return;
+        try {
+          const status = await this.recording.getStatusAsync();
+          const level = status.metering ?? -60;
+          const isSpeaking = level > -40;
+          if (this.onMeteringUpdate) {
+            this.onMeteringUpdate(level, isSpeaking);
+          }
+        } catch {
+          // Recording may have stopped
+        }
+      }, 50);
+    } catch (error) {
+      this.isRecordingInProgress = false;
+      this.onMeteringUpdate = undefined;
+      throw error;
+    }
+  }
+
+  async stopRecordingWithMetering(): Promise<string | null> {
+    if (this.meteringInterval) {
+      clearInterval(this.meteringInterval);
+      this.meteringInterval = null;
+    }
+    this.onMeteringUpdate = undefined;
+    return this.stopRecording();
+  }
+
   async stopRecording(): Promise<string | null> {
     try {
       if (!this.recording) {

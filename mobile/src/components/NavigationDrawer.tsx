@@ -113,7 +113,7 @@ export function NavigationDrawer({ isOpen, onClose }: NavigationDrawerProps) {
         </View>
 
         {/* User info */}
-        {user && (
+        {user ? (
           <View
             style={[
               styles.userSection,
@@ -140,6 +140,35 @@ export function NavigationDrawer({ isOpen, onClose }: NavigationDrawerProps) {
               </Text>
             </View>
           </View>
+        ) : (
+          <TouchableOpacity
+            onPress={() => {
+              router.push('/(auth)/login');
+              onClose();
+            }}
+            style={[
+              styles.userSection,
+              {
+                backgroundColor: isDark
+                  ? theme.colors.primary + '14'
+                  : theme.colors.primary + '08',
+              },
+            ]}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.userAvatar, { backgroundColor: theme.colors.primary + '20' }]}>
+              <Ionicons name="person" size={18} color={theme.colors.primary} />
+            </View>
+            <View style={styles.userInfo}>
+              <Text style={[styles.userName, { color: theme.colors.text }]} numberOfLines={1}>
+                Guest User
+              </Text>
+              <Text style={[styles.userPlan, { color: theme.colors.primary }]}>
+                Tap to sign in
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={theme.colors.textTertiary} />
+          </TouchableOpacity>
         )}
 
         {/* Navigation items */}

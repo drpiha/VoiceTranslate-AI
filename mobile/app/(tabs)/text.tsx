@@ -8,655 +8,480 @@ import {
   ScrollView,
   useColorScheme,
   Alert,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Animated as RNAnimated,
-  PanResponder,
-  Dimensions,
+  Share,
+  Animated,
+  Easing,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-
-// Conditionally import BlurView only on iOS
-let BlurView: any = null;
-if (Platform.OS === 'ios') {
-  try {
-    BlurView = require('expo-blur').BlurView;
-  } catch (e) {
-    // BlurView not available
-  }
-}
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withSequence,
-  FadeInDown,
-  FadeIn,
-} from 'react-native-reanimated';
 import { createTheme } from '../../src/constants/theme';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useTranslationStore } from '../../src/store/translationStore';
-import { useHistoryStore } from '../../src/store/historyStore';
-import { useUserStore } from '../../src/store/userStore';
-import { LanguageSelector } from '../../src/components/LanguageSelector';
-import { translationService } from '../../src/services/translationService';
-import { audioService } from '../../src/services/audioService';
-import { getLanguageByCode } from '../../src/constants/languages';
 import { useNavigationStore } from '../../src/store/navigationStore';
-
-const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
+import { LanguageSelector } from '../../src/components/LanguageSelector';
+import { STTWaveform } from '../../src/components/STTWaveform';
+import { RecordingTimer } from '../../src/components/RecordingTimer';
+import { TranscriptEditor } from '../../src/components/TranscriptEditor';
+import { StateAdaptiveButton, STTScreenState } from '../../src/components/StateAdaptiveButton';
+import { NavigationDrawer } from '../../src/components/NavigationDrawer';
+import { translationService, RealtimeTranslationResult } from '../../src/services/translationService';
+import { audioService, AudioSegment } from '../../src/services/audioService';
 
 export default function TextScreen() {
   const colorScheme = useColorScheme();
-  const { theme: themePreference, hapticFeedback, saveHistory, colorScheme: colorSchemePref } = useSettingsStore();
-  const { user } = useUserStore();
-  const [isDemoMode, setIsDemoMode] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [tipsExpanded, setTipsExpanded] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const [isBackendConnected, setIsBackendConnected] = useState(true);
-  const recordingTimer = useRef<NodeJS.Timeout | null>(null);
-  const pulseAnim = useRef(new RNAnimated.Value(1)).current;
-  const {
-    sourceLanguage,
-    targetLanguage,
-    sourceText,
-    translatedText,
-    isProcessing,
-    setSourceLanguage,
-    setTargetLanguage,
-    setSourceText,
-    setTranslatedText,
-    swapLanguages,
-    setProcessing,
-    setError,
-  } = useTranslationStore();
-  const { addTranslation } = useHistoryStore();
-
+  const { theme: themePreference, colorScheme: currentColorScheme, hapticFeedback } = useSettingsStore();
   const isDark = themePreference === 'dark' || (themePreference === 'system' && colorScheme === 'dark');
-  const theme = createTheme(isDark, colorSchemePref);
+  const theme = createTheme(isDark, currentColorScheme);
+  const { isDrawerOpen, closeDrawer } = useNavigationStore();
 
-  // Animation values
-  const swapRotation = useSharedValue(0);
-  const translateButtonScale = useSharedValue(1);
+  const {
+    isRecording, setRecording,
+    isProcessing, setProcessing,
+    sourceLanguage, setSourceLanguage,
+    targetLanguage, setTargetLanguage,
+    translatedText, setTranslatedText,
+    error, setError,
+    sttMode, setSttMode,
+    sttSessionTitle, setSttSessionTitle,
+    sttTranscript, setSttTranscript,
+    resetStt, swapLanguages,
+  } = useTranslationStore();
 
-  // Drag-to-resize text input
-  const MIN_INPUT_HEIGHT = 100;
-  const MAX_INPUT_HEIGHT = 350;
-  const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
-  const dragStartHeight = useRef(MIN_INPUT_HEIGHT);
+  // Local state
+  const [meteringLevel, setMeteringLevel] = useState(-60);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<'online' | 'offline' | 'checking'>('online');
+  const [copied, setCopied] = useState(false);
 
-  const dragPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 5,
-      onPanResponderGrant: () => {
-        dragStartHeight.current = inputHeight;
-        if (hapticFeedback) {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        }
-      },
-      onPanResponderMove: (_, gestureState) => {
-        const newHeight = Math.max(
-          MIN_INPUT_HEIGHT,
-          Math.min(MAX_INPUT_HEIGHT, dragStartHeight.current + gestureState.dy)
-        );
-        setInputHeight(newHeight);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        // Snap to nearest 50px increment
-        const rawHeight = Math.max(
-          MIN_INPUT_HEIGHT,
-          Math.min(MAX_INPUT_HEIGHT, dragStartHeight.current + gestureState.dy)
-        );
-        const snapped = Math.round(rawHeight / 50) * 50;
-        setInputHeight(Math.max(MIN_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, snapped)));
-        if (hapticFeedback) {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        }
-      },
-    })
-  ).current;
+  // Refs
+  const sourceLanguageRef = useRef(sourceLanguage);
+  const targetLanguageRef = useRef(targetLanguage);
+  const reconnectAttempts = useRef(0);
+  const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
+  const maxReconnectAttempts = 3;
 
-  // Auto-translate debounce
-  const autoTranslateTimer = useRef<NodeJS.Timeout | null>(null);
-  const lastTranslatedText = useRef('');
+  // Swap button animation
+  const swapRotation = useRef(new Animated.Value(0)).current;
+  const swapRotationCount = useRef(0);
+  const swapSpin = swapRotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
 
+  useEffect(() => { sourceLanguageRef.current = sourceLanguage; }, [sourceLanguage]);
+  useEffect(() => { targetLanguageRef.current = targetLanguage; }, [targetLanguage]);
+
+  // Preconnect WebSocket on mount (for real-time mode)
   useEffect(() => {
-    if (!sourceText.trim() || sourceText.trim().length < 2) {
-      if (autoTranslateTimer.current) {
-        clearTimeout(autoTranslateTimer.current);
-        autoTranslateTimer.current = null;
-      }
-      return;
-    }
-
-    // Skip if we already translated this exact text
-    if (sourceText.trim() === lastTranslatedText.current) return;
-
-    if (autoTranslateTimer.current) {
-      clearTimeout(autoTranslateTimer.current);
-    }
-
-    autoTranslateTimer.current = setTimeout(() => {
-      lastTranslatedText.current = sourceText.trim();
-      handleAutoTranslate();
-    }, 400);
-
-    return () => {
-      if (autoTranslateTimer.current) {
-        clearTimeout(autoTranslateTimer.current);
-      }
-    };
-  }, [sourceText, sourceLanguage, targetLanguage]);
-
-  const handleAutoTranslate = async () => {
-    if (!sourceText.trim() || sourceText.trim().length < 2) return;
-
-    setProcessing(true);
-    setError(null);
-
-    try {
-      const result = await translationService.translate(
-        sourceText,
-        sourceLanguage,
-        targetLanguage
-      );
-
-      setTranslatedText(result.translatedText);
-      setIsDemoMode(!translationService.isUsingBackend());
-
-      if (saveHistory) {
-        await addTranslation({
-          sourceLanguage,
-          targetLanguage,
-          sourceText,
-          translatedText: result.translatedText,
-          isFavorite: false,
-        });
-      }
-    } catch (error: any) {
-      console.error('Auto-translate error:', error);
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  // Recording animation
-  useEffect(() => {
-    if (isRecording) {
-      const pulse = RNAnimated.loop(
-        RNAnimated.sequence([
-          RNAnimated.timing(pulseAnim, { toValue: 1.2, duration: 500, useNativeDriver: true }),
-          RNAnimated.timing(pulseAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
-        ])
-      );
-      pulse.start();
-      return () => pulse.stop();
-    } else {
-      pulseAnim.setValue(1);
-    }
-  }, [isRecording]);
-
-  // Backend connection check
-  useEffect(() => {
-    setIsBackendConnected(translationService.isUsingBackend());
-  }, [isDemoMode]);
+    translationService.preconnect();
+  }, []);
 
   const handleHaptic = useCallback(() => {
-    if (hapticFeedback) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    if (hapticFeedback) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [hapticFeedback]);
 
-  const handleStartRecording = async () => {
-    try {
-      handleHaptic();
-      await audioService.startRecording();
-      setIsRecording(true);
-      setRecordingDuration(0);
+  // Determine screen state
+  const screenState: STTScreenState = (() => {
+    if (isRecording) return 'recording';
+    if (isProcessing && !translatedText) return sttTranscript ? 'translating' : 'processing';
+    if (translatedText) return 'has_translation';
+    if (sttTranscript) return 'has_transcript';
+    return 'idle';
+  })();
 
-      recordingTimer.current = setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
-      }, 1000);
-    } catch (error: any) {
-      console.error('Recording start error:', error);
-      Alert.alert('Microphone Error', error.message || 'Could not start recording. Please check microphone permissions.');
-    }
+  // Generate session title
+  const generateTitle = () => {
+    const now = new Date();
+    return `Recording ${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   };
 
-  const handleStopRecording = async () => {
-    try {
-      handleHaptic();
-
-      if (recordingTimer.current) {
-        clearInterval(recordingTimer.current);
-        recordingTimer.current = null;
+  // === REAL-TIME MODE ===
+  const handleWebSocketMessage = useCallback((data: RealtimeTranslationResult) => {
+    if (data.type === 'realtime_ready') {
+      reconnectAttempts.current = 0;
+    } else if (data.type === 'segment_result') {
+      if (data.isEmpty || (!data.transcript && !data.translation)) return;
+      if (data.transcript) {
+        setSttTranscript(
+          useTranslationStore.getState().sttTranscript +
+          (useTranslationStore.getState().sttTranscript ? ' ' : '') +
+          data.transcript
+        );
       }
+    } else if (data.type === 'error') {
+      setError(data.error || 'Unknown error');
+    }
+  }, [setSttTranscript, setError]);
 
-      const audioUri = await audioService.stopRecording();
-      setIsRecording(false);
-      setRecordingDuration(0);
+  const handleSegmentReady = useCallback((segment: AudioSegment) => {
+    translationService.sendAudioSegment(
+      segment.base64,
+      segment.segmentId,
+      sourceLanguageRef.current,
+      targetLanguageRef.current
+    );
+  }, []);
 
-      if (audioUri) {
-        if (!translationService.isUsingBackend()) {
-          Alert.alert(
-            'Offline',
-            'Speech-to-text requires backend connection. Please type your text manually.',
-            [{ text: 'OK' }]
-          );
-        } else {
-          setProcessing(true);
-          try {
-            const result = await translationService.transcribeAudio(audioUri, sourceLanguage);
-            if (result.transcript && result.transcript.trim()) {
-              setSourceText(result.transcript);
-              if (result.detectedLanguage && sourceLanguage === 'auto') {
-                console.log('Detected language:', result.detectedLanguage);
-              }
-            } else {
-              Alert.alert('No Speech', 'No speech was detected. Please try again.');
-            }
-          } catch (error: any) {
-            console.error('STT error:', error);
-            Alert.alert('Error', error.message || 'Speech-to-text failed. Please try again.');
-          } finally {
-            setProcessing(false);
+  const handleMeteringUpdate = useCallback((level: number, speaking: boolean) => {
+    setMeteringLevel(level);
+    setIsSpeaking(speaking);
+  }, []);
+
+  const startRealtimeRecording = async () => {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Connection timeout')), 5000);
+        setBackendStatus('checking');
+        translationService.ensureConnected(
+          handleWebSocketMessage,
+          (err) => { clearTimeout(timeout); setBackendStatus('offline'); reject(err); },
+          () => {
+            clearTimeout(timeout);
+            setIsConnected(true);
+            setBackendStatus('online');
+            reconnectAttempts.current = 0;
+            translationService.startRealtimeSession(sourceLanguageRef.current, targetLanguageRef.current);
+            resolve();
           }
-        }
-      }
-    } catch (error: any) {
-      console.error('Recording stop error:', error);
-      setIsRecording(false);
-      Alert.alert('Error', 'Failed to stop recording');
-    }
-  };
-
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const handleTranslate = async () => {
-    if (!sourceText.trim()) {
-      Alert.alert('Error', 'Please enter text to translate');
+        );
+      });
+    } catch {
+      setError('Connection failed. Try batch mode or check your connection.');
       return;
     }
 
-    handleHaptic();
-    translateButtonScale.value = withSequence(
-      withSpring(0.95),
-      withSpring(1)
-    );
-    setProcessing(true);
-    setError(null);
+    const success = await audioService.startRealtimeMode(handleSegmentReady, handleMeteringUpdate);
+    if (success) {
+      setRecording(true);
+    } else {
+      Alert.alert('Microphone Error', 'Could not start microphone. Please check permissions.');
+    }
+  };
 
+  const stopRealtimeRecording = () => {
+    audioService.stopRealtimeMode();
+    setRecording(false);
+    setIsSpeaking(false);
+    setMeteringLevel(-60);
+  };
+
+  // === BATCH MODE ===
+  const startBatchRecording = async () => {
     try {
-      const result = await translationService.translate(
-        sourceText,
-        sourceLanguage,
-        targetLanguage
-      );
+      await audioService.startRecordingWithMetering(handleMeteringUpdate);
+      setRecording(true);
+    } catch {
+      Alert.alert('Microphone Error', 'Could not start microphone. Please check permissions.');
+    }
+  };
 
-      setTranslatedText(result.translatedText);
-      setIsDemoMode(!translationService.isUsingBackend());
+  const stopBatchRecording = async () => {
+    try {
+      setRecording(false);
+      setMeteringLevel(-60);
+      setIsSpeaking(false);
+      setProcessing(true);
 
-      if (saveHistory) {
-        await addTranslation({
-          sourceLanguage,
-          targetLanguage,
-          sourceText,
-          translatedText: result.translatedText,
-          isFavorite: false,
-        });
+      const audioUri = await audioService.stopRecordingWithMetering();
+      if (audioUri) {
+        const result = await translationService.transcribeAudio(audioUri, sourceLanguageRef.current);
+        if (result.transcript) {
+          setSttTranscript(result.transcript);
+        } else {
+          setError('No speech detected. Try again.');
+        }
       }
-    } catch (error: any) {
-      console.error('Translation error:', error);
-      setIsDemoMode(true);
-      Alert.alert('Error', 'Failed to translate. Please try again.');
-      setError(error.message || 'Translation failed');
+    } catch (err: any) {
+      setError(err.message || 'Transcription failed');
     } finally {
       setProcessing(false);
     }
   };
 
-  const handleSwapLanguages = () => {
-    if (sourceLanguage === 'auto') {
-      Alert.alert('Cannot Swap', 'Cannot swap when source language is set to Auto Detect');
-      return;
-    }
+  // === UNIFIED CONTROLS ===
+  const startRecording = () => {
     handleHaptic();
-    swapRotation.value = withSpring(swapRotation.value + 180);
+    setError(null);
+    setTranslatedText('');
+    if (!sttSessionTitle) setSttSessionTitle(generateTitle());
+
+    if (sttMode === 'realtime') {
+      startRealtimeRecording();
+    } else {
+      startBatchRecording();
+    }
+  };
+
+  const stopRecording = () => {
+    handleHaptic();
+    if (sttMode === 'realtime') {
+      stopRealtimeRecording();
+    } else {
+      stopBatchRecording();
+    }
+  };
+
+  const translateTranscript = async () => {
+    handleHaptic();
+    setProcessing(true);
+    setError(null);
+    try {
+      const result = await translationService.translate(
+        sttTranscript,
+        sourceLanguageRef.current,
+        targetLanguageRef.current
+      );
+      setTranslatedText(result.translatedText);
+    } catch (err: any) {
+      setError(err.message || 'Translation failed');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const newRecording = () => {
+    handleHaptic();
+    resetStt();
+    setTranslatedText('');
+    setError(null);
+    setMeteringLevel(-60);
+    setIsSpeaking(false);
+  };
+
+  const handlePrimaryButton = () => {
+    switch (screenState) {
+      case 'idle': startRecording(); break;
+      case 'recording': stopRecording(); break;
+      case 'has_transcript': translateTranscript(); break;
+      case 'has_translation': newRecording(); break;
+    }
+  };
+
+  const handleSwap = () => {
+    handleHaptic();
+    swapRotationCount.current += 1;
+    Animated.spring(swapRotation, {
+      toValue: swapRotationCount.current,
+      useNativeDriver: true,
+      tension: 50,
+      friction: 8,
+    }).start();
     swapLanguages();
   };
 
-  const handleCopyTranslation = async () => {
-    if (!translatedText) return;
+  const handleCopy = async () => {
     handleHaptic();
     await Clipboard.setStringAsync(translatedText);
-    Alert.alert('Copied', 'Translation copied to clipboard');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleClearAll = () => {
+  const handleShare = async () => {
     handleHaptic();
-    setSourceText('');
-    setTranslatedText('');
+    try {
+      await Share.share({
+        message: `${sttTranscript}\n\n---\n\n${translatedText}`,
+      });
+    } catch {
+      // Share cancelled
+    }
   };
-
-  const swapAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${swapRotation.value}deg` }],
-  }));
-
-  const translateButtonAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: translateButtonScale.value }],
-  }));
-
-  const sourceLang = getLanguageByCode(sourceLanguage);
-  const targetLang = getLanguageByCode(targetLanguage);
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-
-      <SafeAreaView style={styles.safeArea}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.keyboardView}
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Header */}
-            <View style={styles.header}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <TouchableOpacity onPress={useNavigationStore.getState().openDrawer} style={{ padding: 4 }}>
-                  <Ionicons name="menu" size={22} color={theme.colors.text} />
-                </TouchableOpacity>
-                <View>
-                  <Text style={[styles.title, { color: theme.colors.text }]}>Text</Text>
-                  <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
-                    Type or speak, translate instantly
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.headerRight}>
-                <View style={[
-                  styles.connectionBadge,
-                  { backgroundColor: isBackendConnected
-                    ? 'rgba(34, 197, 94, 0.2)'
-                    : 'rgba(239, 68, 68, 0.2)'
-                  }
-                ]}>
-                  <View style={[
-                    styles.connectionDot,
-                    { backgroundColor: isBackendConnected ? theme.colors.success : theme.colors.error }
-                  ]} />
-                  <Text style={[
-                    styles.connectionText,
-                    { color: isBackendConnected ? theme.colors.success : theme.colors.error }
-                  ]}>
-                    {isBackendConnected ? 'Online' : 'Offline'}
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Language Selection Card */}
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity
+              onPress={() => useNavigationStore.getState().openDrawer()}
+              style={styles.menuBtn}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="menu" size={24} color={theme.colors.text} />
+            </TouchableOpacity>
+            <Text style={[styles.title, { color: theme.colors.text }]}>Text</Text>
             <View style={[
-              styles.languageContainer,
-              { backgroundColor: theme.colors.card }
+              styles.statusBadge,
+              { backgroundColor: backendStatus === 'online' ? theme.colors.success + '20' : theme.colors.error + '20' }
             ]}>
-              <View style={styles.languageContent}>
-                <View style={styles.languageRow}>
-                  <View style={styles.languageSelectorWrapper}>
-                    <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>
-                      FROM
-                    </Text>
-                    <LanguageSelector
-                      value={sourceLanguage}
-                      onChange={setSourceLanguage}
-                    />
-                  </View>
-
-                  <AnimatedTouchable
-                    onPress={handleSwapLanguages}
-                    disabled={sourceLanguage === 'auto'}
-                    style={[styles.swapButton]}
-                  >
-                    <View style={[styles.swapButtonGradient, { backgroundColor: theme.colors.primary }]}>
-                      <Animated.View style={swapAnimatedStyle}>
-                        <Ionicons name="swap-horizontal" size={22} color="#FFFFFF" />
-                      </Animated.View>
-                    </View>
-                  </AnimatedTouchable>
-
-                  <View style={styles.languageSelectorWrapper}>
-                    <Text style={[styles.languageLabel, { color: theme.colors.textSecondary }]}>
-                      TO
-                    </Text>
-                    <LanguageSelector
-                      value={targetLanguage}
-                      onChange={setTargetLanguage}
-                      excludeAuto
-                    />
-                  </View>
-                </View>
-              </View>
+              <View style={[
+                styles.statusDot,
+                { backgroundColor: backendStatus === 'online' ? theme.colors.success : theme.colors.error }
+              ]} />
+              <Text style={[
+                styles.statusText,
+                { color: backendStatus === 'online' ? theme.colors.success : theme.colors.error }
+              ]}>
+                {backendStatus === 'checking' ? 'Connecting' : backendStatus === 'online' ? 'Online' : 'Offline'}
+              </Text>
             </View>
+          </View>
 
-            {/* Source Text Input Card */}
-            <View style={[
-              styles.textCard,
-              {
-                backgroundColor: theme.colors.card,
-                borderWidth: 1,
-                borderColor: theme.colors.primary + (isDark ? '15' : '0F'),
-              }
-            ]}>
-              <View style={styles.cardHeader}>
-                <View style={styles.cardHeaderLeft}>
-                  <Text style={styles.flagEmoji}>{sourceLang?.flag || '🌐'}</Text>
-                  <Text style={[styles.languageName, { color: theme.colors.text }]}>
-                    {sourceLang?.name || 'Auto Detect'}
-                  </Text>
-                </View>
-                <View style={styles.cardHeaderRight}>
-                  {isProcessing && (
-                    <View style={styles.autoTranslateIndicator}>
-                      <ActivityIndicator size="small" color={theme.colors.primary} />
-                      <Text style={[styles.autoTranslateText, { color: theme.colors.primary }]}>
-                        Translating...
-                      </Text>
-                    </View>
-                  )}
-                  {sourceText.length > 0 && (
-                    <TouchableOpacity onPress={handleClearAll} style={styles.clearButton}>
-                      <Ionicons name="close-circle" size={22} color={theme.colors.textSecondary} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-              <TextInput
-                style={[styles.textInput, { color: theme.colors.text, height: inputHeight }]}
-                placeholder="Type to translate instantly..."
-                placeholderTextColor={theme.colors.textTertiary}
-                value={sourceText}
-                onChangeText={setSourceText}
-                multiline
-                textAlignVertical="top"
-              />
-              {/* Drag handle to resize */}
-              <View
-                {...dragPanResponder.panHandlers}
-                style={styles.dragHandleContainer}
-              >
-                <View style={[
-                  styles.dragHandle,
-                  { backgroundColor: isDark ? 'rgba(148, 163, 184, 0.4)' : 'rgba(71, 85, 105, 0.25)' }
-                ]} />
-              </View>
-              <View style={styles.cardFooter}>
-                <Text style={[styles.charCount, { color: theme.colors.textTertiary }]}>
-                  {sourceText.length} / 5000
-                </Text>
-              </View>
+          {/* Session Title */}
+          <TextInput
+            style={[styles.sessionTitle, { color: theme.colors.text, borderBottomColor: theme.colors.borderLight }]}
+            value={sttSessionTitle}
+            onChangeText={setSttSessionTitle}
+            placeholder="Session title..."
+            placeholderTextColor={theme.colors.textTertiary}
+          />
+
+          {/* Language Pair */}
+          <View style={[styles.languageRow, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+            <View style={styles.langSide}>
+              <LanguageSelector value={sourceLanguage} onChange={setSourceLanguage} />
             </View>
+            <TouchableOpacity onPress={handleSwap} style={styles.swapBtn} disabled={sourceLanguage === 'auto'}>
+              <Animated.View style={{ transform: [{ rotate: swapSpin }] }}>
+                <View style={[styles.swapCircle, { backgroundColor: theme.colors.primary + '10' }]}>
+                  <Ionicons name="swap-horizontal" size={16} color={theme.colors.primary} />
+                </View>
+              </Animated.View>
+            </TouchableOpacity>
+            <View style={styles.langSide}>
+              <LanguageSelector value={targetLanguage} onChange={setTargetLanguage} excludeAuto />
+            </View>
+          </View>
 
-            {/* Action Buttons Row */}
-            <View style={styles.buttonRow}>
+          {/* Recording Card */}
+          <View style={[styles.recordingCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+            {/* Mode Toggle */}
+            <View style={[styles.modeToggle, { backgroundColor: isDark ? theme.colors.surface : '#F1F5F9' }]}>
               <TouchableOpacity
-                onPress={isRecording ? handleStopRecording : handleStartRecording}
-                disabled={isProcessing}
+                onPress={() => { if (!isRecording) setSttMode('realtime'); }}
+                style={[
+                  styles.modeOption,
+                  sttMode === 'realtime' && { backgroundColor: theme.colors.primary },
+                ]}
+                disabled={isRecording}
                 activeOpacity={0.8}
               >
-                <RNAnimated.View
-                  style={[
-                    styles.micButton,
-                    {
-                      backgroundColor: isRecording
-                        ? theme.colors.error
-                        : theme.colors.primary + (isDark ? '33' : '1F'),
-                      transform: [{ scale: pulseAnim }],
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name={isRecording ? 'stop' : 'mic'}
-                    size={24}
-                    color={isRecording ? '#FFFFFF' : theme.colors.primary}
-                  />
-                  {isRecording && (
-                    <Text style={styles.recordingTime}>
-                      {formatDuration(recordingDuration)}
-                    </Text>
-                  )}
-                </RNAnimated.View>
+                <Text style={[
+                  styles.modeText,
+                  { color: sttMode === 'realtime' ? '#FFFFFF' : theme.colors.textSecondary },
+                ]}>Real-time</Text>
               </TouchableOpacity>
-
-              <AnimatedTouchable
-                onPress={handleTranslate}
-                disabled={isProcessing || !sourceText.trim()}
-                style={[styles.translateButtonWrapper, translateButtonAnimatedStyle]}
-                activeOpacity={0.9}
+              <TouchableOpacity
+                onPress={() => { if (!isRecording) setSttMode('batch'); }}
+                style={[
+                  styles.modeOption,
+                  sttMode === 'batch' && { backgroundColor: theme.colors.primary },
+                ]}
+                disabled={isRecording}
+                activeOpacity={0.8}
               >
-                <View
-                  style={[
-                    styles.translateButton,
-                    {
-                      backgroundColor: (!sourceText.trim() || isProcessing)
-                        ? (isDark ? '#4B5563' : '#94A3B8')
-                        : theme.colors.primary
-                    }
-                  ]}
-                >
-                  {isProcessing ? (
-                    <ActivityIndicator color="#FFFFFF" size="small" />
-                  ) : (
-                    <>
-                      <Ionicons name="language" size={22} color="#FFFFFF" />
-                      <Text style={styles.translateButtonText}>Translate</Text>
-                    </>
-                  )}
-                </View>
-              </AnimatedTouchable>
+                <Text style={[
+                  styles.modeText,
+                  { color: sttMode === 'batch' ? '#FFFFFF' : theme.colors.textSecondary },
+                ]}>Batch</Text>
+              </TouchableOpacity>
             </View>
 
-            {/* Translation Result Card */}
-            {translatedText.length > 0 && (
-              <Animated.View
-                entering={FadeInDown.duration(300).springify()}
-                style={[
-                  styles.textCard,
-                  styles.resultCard,
-                  {
-                    backgroundColor: theme.colors.card,
-                    borderTopWidth: 2,
-                    borderTopColor: theme.colors.primary + '30',
-                  }
-                ]}
-              >
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    <Text style={styles.flagEmoji}>{targetLang?.flag || '🌐'}</Text>
-                    <Text style={[styles.languageName, { color: theme.colors.text }]}>
-                      {targetLang?.name || 'Unknown'}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={handleCopyTranslation}
-                    style={[styles.copyButton, {
-                      backgroundColor: theme.colors.primary + (isDark ? '26' : '1A'),
-                    }]}
-                  >
-                    <Ionicons name="copy-outline" size={18} color={theme.colors.primary} />
-                  </TouchableOpacity>
-                </View>
-                <Text style={[styles.translatedText, { color: theme.colors.text }]}
-                  selectable
-                >
-                  {translatedText}
-                </Text>
-              </Animated.View>
-            )}
+            {/* Waveform */}
+            <View style={styles.waveformContainer}>
+              <STTWaveform
+                isActive={isRecording}
+                meteringLevel={meteringLevel}
+                isSpeaking={isSpeaking}
+                primaryColor={theme.colors.primary}
+                accentColor={theme.colors.accent}
+              />
+            </View>
 
-            {/* Quick Tips - Collapsible */}
-            {!sourceText && !translatedText && (
-              <View style={[
-                styles.tipsContainer,
-                { backgroundColor: theme.colors.card + (isDark ? 'CC' : 'F0') }
-              ]}>
-                <TouchableOpacity
-                  onPress={() => setTipsExpanded(!tipsExpanded)}
-                  style={styles.tipsHeader}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="bulb" size={18} color={theme.colors.warning} />
-                  <Text style={[styles.tipsTitle, { color: theme.colors.text }]}>Quick Tips</Text>
-                  <View style={{ flex: 1 }} />
-                  <Ionicons
-                    name={tipsExpanded ? 'chevron-up' : 'chevron-down'}
-                    size={18}
-                    color={theme.colors.textTertiary}
-                  />
-                </TouchableOpacity>
-                {tipsExpanded && (
-                  <Animated.View entering={FadeInDown.duration(200)}>
-                    <View style={styles.tipItem}>
-                      <View style={[styles.tipIconContainer, { backgroundColor: theme.colors.primary + '1A' }]}>
-                        <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
-                      </View>
-                      <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
-                        Type or paste text above to translate instantly
-                      </Text>
-                    </View>
-                    <View style={styles.tipItem}>
-                      <View style={[styles.tipIconContainer, { backgroundColor: theme.colors.accent + '1A' }]}>
-                        <Ionicons name="swap-horizontal" size={18} color={theme.colors.accent} />
-                      </View>
-                      <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
-                        Tap the swap button to switch languages
-                      </Text>
-                    </View>
-                    <View style={styles.tipItem}>
-                      <View style={[styles.tipIconContainer, { backgroundColor: theme.colors.success + '1A' }]}>
-                        <Ionicons name="mic" size={18} color={theme.colors.success} />
-                      </View>
-                      <Text style={[styles.tipText, { color: theme.colors.textSecondary }]}>
-                        Use voice input for hands-free translation
-                      </Text>
-                    </View>
-                  </Animated.View>
-                )}
+            {/* Timer */}
+            <RecordingTimer
+              isRecording={isRecording}
+              textColor={isRecording ? theme.colors.error : theme.colors.textTertiary}
+            />
+
+            {/* Recording indicator */}
+            {isRecording && (
+              <View style={styles.recordingIndicator}>
+                <View style={[styles.recordingDot, { backgroundColor: theme.colors.error }]} />
+                <Text style={[styles.recordingLabel, { color: theme.colors.error }]}>
+                  {sttMode === 'realtime' ? 'Listening...' : 'Recording...'}
+                </Text>
               </View>
             )}
-          </ScrollView>
-        </KeyboardAvoidingView>
+          </View>
+
+          {/* Transcript Card */}
+          <View style={styles.transcriptSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Transcript</Text>
+              {sttTranscript.length > 0 && (
+                <TouchableOpacity onPress={() => setSttTranscript('')} activeOpacity={0.7}>
+                  <Text style={[styles.clearBtn, { color: theme.colors.textTertiary }]}>Clear</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <TranscriptEditor
+              transcript={sttTranscript}
+              onEdit={setSttTranscript}
+              isEditable={!isRecording && !isProcessing}
+              textColor={theme.colors.text}
+              placeholderColor={theme.colors.textTertiary}
+              backgroundColor={theme.colors.card}
+              borderColor={theme.colors.border}
+              accentColor={theme.colors.primary}
+            />
+          </View>
+
+          {/* Error Banner */}
+          {error && (
+            <View style={[styles.errorBanner, { backgroundColor: theme.colors.error + '15' }]}>
+              <Ionicons name="warning-outline" size={16} color={theme.colors.error} />
+              <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text>
+            </View>
+          )}
+
+          {/* Primary Action Button */}
+          <StateAdaptiveButton
+            state={screenState}
+            onPress={handlePrimaryButton}
+            primaryColor={theme.colors.primary}
+            errorColor={theme.colors.error}
+            disabled={screenState === 'processing' || screenState === 'translating'}
+          />
+
+          {/* Translation Result */}
+          {translatedText.length > 0 && (
+            <View style={[styles.resultCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+              <View style={styles.sectionHeader}>
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Translation</Text>
+              </View>
+              <Text style={[styles.resultText, { color: theme.colors.text }]} selectable>
+                {translatedText}
+              </Text>
+              <View style={styles.resultActions}>
+                <TouchableOpacity onPress={handleCopy} style={[styles.actionBtn, { backgroundColor: theme.colors.primary + '10' }]}>
+                  <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={18} color={theme.colors.primary} />
+                  <Text style={[styles.actionLabel, { color: theme.colors.primary }]}>
+                    {copied ? 'Copied' : 'Copy'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleShare} style={[styles.actionBtn, { backgroundColor: theme.colors.accent + '10' }]}>
+                  <Ionicons name="share-outline" size={18} color={theme.colors.accent} />
+                  <Text style={[styles.actionLabel, { color: theme.colors.accent }]}>Share</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          <View style={{ height: 32 }} />
+        </ScrollView>
       </SafeAreaView>
+
+      <NavigationDrawer isOpen={isDrawerOpen} onClose={closeDrawer} />
     </View>
   );
 }
@@ -668,244 +493,174 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
-  keyboardView: {
+  scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 20,
-    paddingBottom: 120,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 24,
-  },
-  headerRight: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  menuBtn: {
+    padding: 4,
   },
   title: {
     fontSize: 28,
     fontWeight: '700',
+    flex: 1,
     letterSpacing: -0.5,
   },
-  subtitle: {
-    fontSize: 14,
-    marginTop: 4,
-  },
-  connectionBadge: {
+  statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
-    gap: 6,
+    paddingVertical: 5,
+    borderRadius: 12,
+    gap: 5,
   },
-  connectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
-  connectionText: {
-    fontSize: 12,
+  statusText: {
+    fontSize: 11,
     fontWeight: '600',
   },
-  languageContainer: {
-    borderRadius: 20,
+  sessionTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
     marginBottom: 16,
-    overflow: 'hidden',
-  },
-  languageContent: {
-    padding: 16,
   },
   languageRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
   },
-  languageSelectorWrapper: {
+  langSide: {
     flex: 1,
   },
-  languageLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 8,
-    letterSpacing: 1,
+  swapBtn: {
+    paddingHorizontal: 4,
   },
-  swapButton: {
-    marginHorizontal: 12,
-    marginTop: 20,
-  },
-  swapButtonGradient: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  swapCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
   },
-  textCard: {
-    borderRadius: 20,
-    padding: 16,
+  recordingCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+    alignItems: 'center',
+    gap: 16,
     marginBottom: 16,
-    minHeight: 160,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
   },
-  resultCard: {
-    overflow: 'hidden',
-  },
-  cardHeader: {
+  modeToggle: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
+    borderRadius: 10,
+    padding: 3,
+    alignSelf: 'stretch',
   },
-  cardHeaderLeft: {
-    flexDirection: 'row',
+  modeOption: {
+    flex: 1,
+    paddingVertical: 8,
     alignItems: 'center',
+    borderRadius: 8,
   },
-  cardHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  modeText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
-  autoTranslateIndicator: {
+  waveformContainer: {
+    width: '100%',
+    paddingVertical: 8,
+  },
+  recordingIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  autoTranslateText: {
-    fontSize: 12,
-    fontWeight: '500',
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
-  flagEmoji: {
-    fontSize: 22,
-    marginRight: 10,
-  },
-  languageName: {
-    fontSize: 16,
+  recordingLabel: {
+    fontSize: 13,
     fontWeight: '600',
   },
-  clearButton: {
-    padding: 4,
+  transcriptSection: {
+    marginBottom: 16,
   },
-  textInput: {
-    fontSize: 16,
-    lineHeight: 24,
-    minHeight: 100,
-  },
-  dragHandleContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    marginTop: 4,
-  },
-  dragHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-  },
-  cardFooter: {
-    marginTop: 4,
-  },
-  charCount: {
-    fontSize: 11,
-    textAlign: 'right',
-  },
-  buttonRow: {
+  sectionHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 14,
-    marginBottom: 20,
+    marginBottom: 8,
   },
-  micButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 3,
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  recordingTime: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginTop: 2,
+  clearBtn: {
+    fontSize: 13,
+    fontWeight: '500',
   },
-  translateButtonWrapper: {
-    flex: 1,
-  },
-  translateButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 14,
-    gap: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  translateButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
-  translatedText: {
-    fontSize: 16,
-    lineHeight: 26,
-  },
-  copyButton: {
-    padding: 8,
-    borderRadius: 10,
-  },
-  tipsContainer: {
-    borderRadius: 16,
-    padding: 14,
-  },
-  tipsHeader: {
+  errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 16,
   },
-  tipsTitle: {
-    fontSize: 15,
-    fontWeight: '600',
+  errorText: {
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
   },
-  tipItem: {
+  resultCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    marginTop: 16,
+  },
+  resultText: {
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: '400',
+  },
+  resultActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  actionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
-    marginTop: 10,
-  },
-  tipIconContainer: {
-    width: 36,
-    height: 36,
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
   },
-  tipText: {
-    fontSize: 14,
-    flex: 1,
-    lineHeight: 20,
+  actionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
